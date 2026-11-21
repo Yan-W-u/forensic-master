@@ -287,9 +287,12 @@ def read_file(f, path):
 
 
 def read_text(f, path):
-    """读文本，返回字符串。截断时 stderr 已警告。"""
+    """读文本，返回 str。截断时抛 fsio.Truncated（不静默返回半截）。"""
     import fsio as _fsio
-    return _fsio.text(f, path)
+    r = _fsio.read_text(f, path)
+    if r.truncated:
+        raise _fsio.Truncated(path, r.size_expected, r.size_actual, r.data, 'text')
+    return r.data.decode('utf-8', 'replace')
 
 
 

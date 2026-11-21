@@ -36,8 +36,12 @@ def utc(ts):
 
 
 def read_text(fs, path):
-    """普通文本，返回字符串。截断时 stderr 已警告。"""
-    return fsio.text(fs, path)
+    """普通文本。返回 (text, truncated)。
+
+    显式返回 truncated，调用方要自己决定是否接受。
+    """
+    r = fsio.read_text(fs, path)
+    return r.data.decode('utf-8', 'replace'), r.truncated
 
 
 def read_log(fs, path, tail=None):
@@ -63,7 +67,7 @@ def cmd_profile(fs):
     print('=' * 76)
     # os-release 要先判符号链接
     for p in ('/usr/lib/os-release', '/etc/os-release'):
-        t = read_text(fs, p)
+        t, _tr = read_text(fs, p)
         if t and '=' in t:
             d = dict(l.split('=', 1) for l in t.splitlines() if '=' in l)
             print('%-18s %-12s %s' % ('发行版', d.get('ID', '?').strip('"'),
@@ -76,7 +80,7 @@ def cmd_profile(fs):
         ('时区', '/etc/timezone', None),
         ('内核', '/proc/version', None),
     ]:
-        t = read_text(fs, p).strip()
+        t, _tr = read_text(fs, p).strip()
         if t:
             print('%-18s %s' % (label, t.splitlines()[0][:90]))
     print()
@@ -134,7 +138,7 @@ def cmd_cron(fs):
     BACKDOOR = ['curl', 'wget', 'base64 -d', '/dev/tcp/', 'nc -e', 'bash -i',
                 'python -c', 'perl -e', 'xxd -r', 'chmod +x /tmp', 'sh -c']
     for p in LOCS:
-        t = read_text(fs, p)
+        t, _tr = read_text(fs, p)
         if not t.strip():
             continue
         print('\n--- %s ---' % p)
@@ -159,7 +163,7 @@ def cmd_cron(fs):
             nm, sz, isdir, m = e.name, e.size, e.is_dir, e.meta
             if not nm.endswith('.timer'):
                 continue
-            t = read_text(fs, d + '/' + nm)
+            t, _tr = read_text(fs, d + '/' + nm)
             cal = re.search(r'OnCalendar=(.*)', t)
             unit = re.search(r'Unit=(.*)', t)
             print('  %-40s %-26s -> %s' % (nm, (cal.group(1) if cal else '?'),
@@ -182,7 +186,7 @@ def cmd_hist(fs, user='root'):
         '清理': ['shred', 'rm -rf', 'history -c', 'unset HISTFILE', '>/dev/null'],
     }
     for fn in FILES:
-        t = read_text(fs, base + '/' + fn)
+        t, _tr = read_text(fs, base + '/' + fn)
         if not t.strip():
             continue
         lines = t.splitlines()
@@ -213,7 +217,7 @@ def cmd_ssh(fs):
     print('=' * 76)
     print('SSH 取证')
     print('=' * 76)
-    cfg = read_text(fs, '/etc/ssh/sshd_config')
+    cfg, _tr = read_text(fs, '/etc/ssh/sshd_config')
     if cfg:
         for k in ('Port', 'PermitRootLogin', 'PasswordAuthentication',
                   'PubkeyAuthentication', 'AllowUsers', 'MaxAuthTries'):
@@ -227,8 +231,8 @@ def cmd_ssh(fs):
     print('\n--- 认证日志（登录/失败/sudo）---')
     for p in ('/var/log/auth.log', '/var/log/secure'):
         # 先读尾部看「最近」，再全量统计
-        tail = read_log(fs, p, tail=2 << 20)
-        t = read_log(fs, p)
+        tail, _tr = read_log(fs, p, tail=2 << 20)
+        t, _tr = read_log(fs, p)
         if not t.strip() and not tail.strip():
             continue
         # 尾部里找最后一次成功登录
@@ -257,7 +261,7 @@ def cmd_ssh(fs):
                 if isdir:
                     cands.append('/home/%s/.ssh/authorized_keys' % nm)
         for p in cands:
-            t = read_text(fs, p)
+            t, _tr = read_text(fs, p)
             if not t.strip():
                 continue
             print('  ---', p)
@@ -284,7 +288,7 @@ def cmd_systemd(fs, kw=''):
                 continue
             if kw and kw.lower() not in nm.lower():
                 continue
-            t = read_text(fs, d + '/' + nm)
+            t, _tr = read_text(fs, d + '/' + nm)
             desc = re.search(r'Description=(.*)', t)
             ex = re.search(r'ExecStart=(.*)', t)
             print('  %-42s' % nm)
@@ -308,7 +312,7 @@ def cmd_docker(fs):
         if not isdir:
             continue
         p = '%s/%s/config.v2.json' % (base, nm)
-        t = read_text(fs, p)
+        t, _tr = read_text(fs, p)
         if not t:
             continue
         try:
@@ -346,7 +350,7 @@ def cmd_web(fs):
             elif nm.endswith('.conf'):
                 CAND.append(base + '/' + nm)
     for p in CAND:
-        t = read_text(fs, p)
+        t, _tr = read_text(fs, p)
         if not t.strip():
             continue
         lines = [l.strip() for l in t.splitlines()
@@ -359,7 +363,7 @@ def cmd_web(fs):
         for s in lines:
             print('   ', s[:120])
     for p in ('/etc/apache2/ports.conf', '/etc/httpd/conf/httpd.conf'):
-        t = read_text(fs, p)
+        t, _tr = read_text(fs, p)
         if t.strip():
             print('\n--- %s ---' % p)
             for ln in t.splitlines():

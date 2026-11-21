@@ -49,21 +49,30 @@ def ft2dt(ft):
     return fsio.ts_filetime(ft)
 
 
+def _pick(kind):
+    return {'hive': fsio.read_hive, 'evtx': fsio.read_evtx,
+            'log': fsio.read_log}.get(kind, fsio.read_text)
+
+
 def read(fs, path, kind='text'):
-    """读文件，返回 bytes。
+    """完整读取。**截断即抛 Truncated** —— 半截数据从不静默返回。
 
-    kind: 'text' | 'hive' | 'evtx' | 'log' —— 决定上限，**不接受 limit**。
-    要放宽上限请设环境变量 FSIO_MAX_TEXT / FSIO_MAX_HIVE / FSIO_MAX_EVTX。
-
-    需要知道是否被截断时，直接用 fsio.read_*() 拿 ReadResult。
+    kind: 'text' | 'hive' | 'evtx' | 'log'（决定上限，不接受 limit）
+    没读到抛 ReadFailed；读到但不满抛 Truncated（带 .data）。
     """
-    fn = {'hive': fsio.read_hive, 'evtx': fsio.read_evtx,
-          'log': fsio.read_log}.get(kind, fsio.read_text)
-    return fn(fs, path).data
+    r = _pick(kind)(fs, path)
+    if r.truncated:
+        raise fsio.Truncated(path, r.size_expected, r.size_actual, r.data, kind)
+    return r.data
 
 
-def read_text(fs, path):
-    return fsio.text(fs, path)
+def read_partial(fs, path, kind='text'):
+    """明确表示接受半截。返回 (data, truncated)。
+
+    调用方负责在输出里标注截断。
+    """
+    r = _pick(kind)(fs, path)
+    return r.data, r.truncated
 
 
 # 目录枚举统一走 fsio.Entry。name 永远是干净文件名，可原样拼路径。
@@ -122,11 +131,10 @@ def cmd_hives(fs):
         T['%s_UsrClass' % nm] = '/Users/%s/AppData/Local/Microsoft/Windows/UsrClass.dat' % nm
     for name, p in T.items():
         try:
-            r = fsio.read_hive(fs, p)
-            d = r.data
-            if d:
-                open(os.path.join(OUTROOT, name), 'wb').write(d)
-                print('  %-28s %10d' % (name, len(d)))
+            # hive 半截喂 regipy 必失败 → read 抛异常，只写完整文件
+            d = read(fs, p, 'hive')
+            open(os.path.join(OUTROOT, name), 'wb').write(d)
+            print('  %-28s %10d' % (name, len(d)))
         except Exception:
             pass
 
@@ -463,11 +471,14 @@ def cmd_evtx(fs):
             'Microsoft-Windows-Sysmon%4Operational.evtx']
     for n in WANT:
         try:
-            d = read(fs, '/Windows/System32/winevt/Logs/' + n)
+            # evtx 半截仍能解析出部分事件 → 明确接受，并在输出标注
+            d, trunc = read_partial(
+                fs, '/Windows/System32/winevt/Logs/' + n, 'evtx')
             open(os.path.join(out, n), 'wb').write(d)
-            print('  %-62s %10d' % (n, len(d)))
-        except Exception:
-            print('  %-62s MISSING' % n)
+            flag = '  ⚠ 部分（截断）' if trunc else ''
+            print('  %-62s %10d%s' % (n, len(d), flag))
+        except fsio.ReadFailed as e:
+            print('  %-62s MISSING (%s)' % (n, e.reason))
     csv = os.path.join(OUTROOT, 'evtx_csv')
     os.makedirs(csv, exist_ok=True)
     exe = os.path.join(EZ, 'EvtxECmd', 'EvtxeCmd', 'EvtxECmd.exe')
@@ -505,14 +516,18 @@ def cmd_pf(fs):
     if items:
         out = os.path.join(OUTROOT, 'prefetch')
         os.makedirs(out, exist_ok=True)
+        failed = []
         for e in items:
             try:
-                # e.name 是干净文件名，能原样拼回路径
+                # Prefetch 单个文件小，截断就是异常 → read 抛，不写半截
                 data = read(fs, '/Windows/Prefetch/' + e.name, 'text')
-                if data:
-                    open(os.path.join(out, e.name), 'wb').write(data)
-            except Exception as ex:
-                fsio.warn('导出 %s 失败: %s' % (e.name, ex))
+                open(os.path.join(out, e.name), 'wb').write(data)
+            except (fsio.ReadFailed, fsio.Truncated) as ex:
+                failed.append((e.name, str(ex)[:70]))
+        if failed:
+            print('\n  ⚠ %d 个未能完整导出：' % len(failed))
+            for nm, why in failed[:10]:
+                print('     %-46s %s' % (nm, why))
         print('\n已导出到 %s，可跑 PECmd' % out)
 
 

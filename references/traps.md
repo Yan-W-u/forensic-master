@@ -537,9 +537,35 @@ fsio.read_hive(fs, p)   # 512 MB
 fsio.read_log(fs, p)    # 256 MB
 ```
 
-**截断语义**：返回 `ReadResult(data, truncated, size_expected, size_actual)`。
-`truncated=True` 时调用方在**程序里**能判断，不只在 stderr 吼一声。
-要求完整用 `check_complete(r)`，截断则抛 IOError。
+**失败语义分两类，不许混**：
+
+| 异常 | 含义 | 带数据 |
+|---|---|---|
+| `ReadFailed` | 根本没读到：不存在 / 权限 / IO / 无元数据 | 否 |
+| `Truncated` | 读到了但不满（继承 ReadFailed） | **是**（`.data`） |
+
+**为什么必须拆开**：把「打不开」编码成 `truncated=True`，会让
+`if r.truncated:` 把「文件不存在」报成「截断」，`check_complete()` 对不存在的
+文件抛「截断」异常 —— 查错方向直接带偏。
+
+**命令层截断即抛**：
+
+```python
+d = winkit.read(fs, p)                  # 截断 → 抛 Truncated（不静默返回半截）
+d, trunc = winkit.read_partial(fs, p)   # 明确接受，调用方负责标注
+```
+
+判据：**「想忽略」和「想处理」在语法上必须不同**。
+`read(...).data` 和 `read(...)` 没区别，都是顺手往下走；
+而 `read(...)` 要忽略必须写 `except Truncated`，写的时候看见这个词。
+
+**6 个调用点按「半截能否用」分类**：
+
+| 调用点 | 处理 | 理由 |
+|---|---|---|
+| `cmd_evtx` | `read_partial` + 输出标 `⚠ 部分` | 8MB 的 evtx 仍能解析出事件 |
+| `cmd_pf` | `read` | Prefetch 单文件小，截断就是异常 |
+| 导出循环 | `read` + `try/except` 记失败清单 | 半截文件写出去了比没写更坏 |
 
 ### 陷阱 38：已删除文件混在正常文件里
 
