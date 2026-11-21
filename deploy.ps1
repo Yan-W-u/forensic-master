@@ -17,7 +17,7 @@ param(
     [switch]$Critical,
     [switch]$SkillOnly,
     [string]$Target = "",
-    [string]$Profile = "core"
+    [string]$PkgProfile = "core"
 )
 
 $ErrorActionPreference = 'Continue'
@@ -73,25 +73,71 @@ if (-not $Check) {
     if ($srcAbs -eq $dstAbs) {
         Write-Host "✓ 已在目标位置: $dstAbs" -ForegroundColor Green
     } else {
-        if (Test-Path $dstAbs) {
-            $bak = "$dstAbs.bak-" + (Get-Date -Format 'yyyyMMddHHmm')
-            Move-Item $dstAbs $bak
-            Write-Host "  旧版本备份: $bak" -ForegroundColor Yellow
-        }
-        New-Item -ItemType Directory -Force -Path (Split-Path $dstAbs) | Out-Null
-        # 排除 .git / __pycache__ / 输出目录
-        $exclude = @('.git', '__pycache__', '_dl', 'out', '*.pyc')
+        # ---- 先复制到临时目录，成功后再替换（失败可回滚） ----
+        $stage = "$dstAbs.staging-" + (Get-Date -Format 'yyyyMMddHHmmss')
+        New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+        Write-Host "  复制到暂存区: $stage" -ForegroundColor DarkGray
+        $copyOk = $true
         $robocopy = Get-Command 'robocopy' -ErrorAction SilentlyContinue
         if ($robocopy) {
-            $args = @($srcAbs, $dstAbs, '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NP',
-                      '/XD', '.git', '__pycache__', '_dl', 'out',
-                      '/XF', '*.pyc')
-            & robocopy @args *> $null
+            & robocopy $srcAbs $stage /E /NFL /NDL /NJH /NJS /NP `
+                /XD '.git' '__pycache__' '_dl' 'out' /XF '*.pyc' | Out-Null
+            # robocopy: 0-7 成功，>=8 失败
+            if ($LASTEXITCODE -ge 8) {
+                Write-Host "✗ robocopy 失败 (exit $LASTEXITCODE)" -ForegroundColor Red
+                $copyOk = $false
+            }
         } else {
-            Copy-Item -Path (Join-Path $srcAbs '*') -Destination $dstAbs -Recurse -Force `
-                -Exclude $exclude
+            try {
+                Copy-Item -Path (Join-Path $srcAbs '*') -Destination $stage -Recurse -Force
+            } catch {
+                Write-Host "✗ 复制失败: $_" -ForegroundColor Red
+                $copyOk = $false
+            }
         }
-        Write-Host "✓ 已部署到: $dstAbs" -ForegroundColor Green
+
+        if (-not $copyOk) {
+            Write-Host "  清理暂存区，原目录未动" -ForegroundColor Yellow
+            Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "✗ 部署失败，旧版本保持原样" -ForegroundColor Red
+            exit 1
+        }
+
+        # ---- 校验暂存区完整性 ----
+        if (-not (Test-Path (Join-Path $stage 'SKILL.md'))) {
+            Write-Host "✗ 暂存区缺 SKILL.md，放弃替换" -ForegroundColor Red
+            Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+            exit 1
+        }
+
+        # ---- 原子替换（失败自动回滚） ----
+        $bak = $null
+        if (Test-Path $dstAbs) {
+            $bak = "$dstAbs.bak-" + (Get-Date -Format 'yyyyMMddHHmm')
+            try {
+                Move-Item $dstAbs $bak -ErrorAction Stop
+                Write-Host "  旧版本移入: $bak" -ForegroundColor DarkGray
+            } catch {
+                Write-Host "✗ 备份旧版本失败: $_" -ForegroundColor Red
+                Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+                exit 1
+            }
+        }
+
+        try {
+            Move-Item $stage $dstAbs -ErrorAction Stop
+            Write-Host "✓ 已部署到: $dstAbs" -ForegroundColor Green
+        } catch {
+            Write-Host "✗ 替换失败: $_" -ForegroundColor Red
+            # 回滚
+            if ($bak -and (Test-Path $bak) -and -not (Test-Path $dstAbs)) {
+                Move-Item $bak $dstAbs -ErrorAction SilentlyContinue
+                Write-Host "  已回滚到旧版本" -ForegroundColor Yellow
+            }
+            Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+            exit 1
+        }
     }
     $InstallPy = Join-Path $dstAbs 'scripts\install.py'
 }
@@ -99,12 +145,12 @@ if (-not $Check) {
 # ---------- 4. 安装依赖 ----------
 if (-not $SkillOnly) {
     Write-Head "步骤 2/2 安装依赖"
-    $args = @()
-    if ($Check)    { $args += '--check' }
-    if ($All)      { $args += '--all' }
-    if ($Critical) { $args += '--critical' }
-    $args += @('--profile', $Profile)
-    & $py $InstallPy @args
+    $pyArgs = @()
+    if ($Check)    { $pyArgs += '--check' }
+    if ($All)      { $pyArgs += '--all' }   # install.py 内部会检查是否与 -Profile 冲突
+    if ($Critical) { $pyArgs += '--critical' }
+    $pyArgs += @('--profile', $PkgProfile, '--yes')
+    & $py $InstallPy @pyArgs
 }
 
 # ---------- 5. 后续提示 ----------

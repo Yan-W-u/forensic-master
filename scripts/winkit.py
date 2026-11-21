@@ -33,46 +33,47 @@ sys.path.insert(0, os.environ.get('CASE_DIR', '.'))
 sys.path.insert(0, _HERE)
 
 import pytsk3
+import fsio
 
 EZ = os.environ.get('EZTOOLS', r'D:\ForensicTools\eztools')
 OUTROOT = os.environ.get('WIN_OUT', os.path.join(os.getcwd(), 'win_out'))
 
 
 def dt_utc(ts):
-    if not ts:
-        return '-'
-    try:
-        return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-    except Exception:
-        return str(ts)
+    """pytsk3 epoch 秒 → 带 UTC 标记的字符串（统一口径）"""
+    return fsio.fmt_epoch(ts)
 
 
 def ft2dt(ft):
-    if not ft:
-        return None
-    try:
-        return datetime.datetime(1601, 1, 1) + datetime.timedelta(microseconds=ft // 10)
-    except Exception:
-        return None
+    """Windows FILETIME → 带 tz 的 UTC datetime"""
+    return fsio.ts_filetime(ft)
 
 
-def read(fs, path, limit=64 << 20):
-    n = fs.open(path)
-    return n.read_random(0, min(n.info.meta.size or 0, limit))
+def read(fs, path, limit=None, what='text'):
+    """读文件。超上限报警，不静默截断。"""
+    if what == 'hive':
+        return fsio.read_hive(fs, path)
+    data, _ = fsio.read_all(fs, path, limit=limit, what=what)
+    return data
+
+
+def read_text(fs, path, limit=None):
+    return fsio.read_text(fs, path, limit)
 
 
 def ls(fs, path):
+    """列目录。返回 (name, size, is_dir, meta)，已删除项带 [DELETED] 标记
+    兼容旧调用：第 3 项仍是 is_dir，第 4 项仍是 meta。"""
     out = []
-    try:
-        for en in fs.open_dir(path):
-            nm = en.info.name.name.decode('utf-8', 'replace')
-            if nm in ('.', '..'):
-                continue
-            m = en.info.meta
-            out.append((nm, m.size if m else 0, m.type == pytsk3.TSK_FS_META_TYPE_DIR, m))
-    except Exception:
-        pass
+    for nm, sz, isdir, deleted, m in fsio.ls(fs, path):
+        shown = (nm + ' [DELETED]') if deleted else nm
+        out.append((shown, sz, isdir, m))
     return out
+
+
+def ls_raw(fs, path):
+    """带删除标记的原始列表：(name, size, is_dir, is_deleted, meta)"""
+    return fsio.ls(fs, path)
 
 
 def find_controlset(fs):
@@ -122,7 +123,7 @@ def cmd_hives(fs):
         T['%s_UsrClass' % nm] = '/Users/%s/AppData/Local/Microsoft/Windows/UsrClass.dat' % nm
     for name, p in T.items():
         try:
-            d = read(fs, p)
+            d = fsio.read_hive(fs, p)
             if d:
                 open(os.path.join(OUTROOT, name), 'wb').write(d)
                 print('  %-28s %10d' % (name, len(d)))

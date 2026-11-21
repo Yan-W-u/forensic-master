@@ -8,7 +8,7 @@ description: |
   车联网（CAN/CAN-FD/UDS/DBC/GPS/车机镜像/T-Box）、注册表/事件日志分析、
   已删除文件恢复、时间线重建、WhatsApp/iOS 备份/浏览器数据提取。
   核心是三档分类法（A 不用密钥 / B 解一薄层 / C 密钥链），执行顺序 A→B→C。
-  带 35 条失分陷阱 + 26 项开工检查表 + 6 个专用工具集。
+  带 40 条失分陷阱 + 26 项开工检查表 + 6 个专用工具集。
 license: MIT
 metadata:
   version: "2.0.0"
@@ -666,6 +666,37 @@ check: dns.qry.name          OK
        sctp.i_forward_tsn_mid INVALID ❌   ← 就是卡了我三轮的字段
 
 ports: 443(32992) 9000(29020) 9444(27659) 123(27395) 53(27101)
+```
+
+### ev.py + fsio.py —— 证据访问层与安全读取层
+
+**所有 kit 工具的底座。分析前先看这两个。**
+
+```powershell
+# 通用访问层：E01/raw → pytsk3 FS
+python <skill>\scripts\ev.py "D:\case\disk.E01" --parts     # 只列分区
+python <skill>\scripts\ev.py "D:\case\disk.E01"             # 自动挑最大分区
+
+# 安全读取层自检
+python <skill>\scripts\fsio.py
+```
+
+**fsio 解决的四个静默错误**（见 traps 36–40）：
+
+| 问题 | 旧做法 | fsio |
+|---|---|---|
+| 日志方向 | `read_random(0, 2MB)` 拿最旧 | `read_log(tail=N)` 拿最新 |
+| hive 截断 | 静默限 64 MB | `read_hive()` 限 512 MB 且报警 |
+| 删除文件 | 混在正常项里 | `ls()` 返回 5 元组带 `is_deleted` |
+| 时间口径 | 两种格式混打 | `fmt_epoch`/`fmt_filetime` 统一带 UTC/LCL |
+
+```python
+import fsio
+from ev import open_fs
+fs = open_fs('D:/case/disk.E01')                     # 自动选分区
+tail = fsio.read_log(fs, '/var/log/auth.log', tail=2<<20)   # 最近
+rows = fsio.ls(fs, '/Users')                          # 带删除标记
+print(fsio.fmt_epoch(rows[0][4].mtime))               # 2026-09-01 06:13:20 UTC
 ```
 
 ### winkit.py —— Windows 取证工具集

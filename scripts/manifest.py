@@ -245,6 +245,8 @@ SKILL_SCRIPTS = [
     ('netkit.py',    '流量取证（8 子命令）'),
     ('iotkit.py',    '嵌入式取证（7 子命令）'),
     ('hexins.py',    '十六进制检视（6 子命令）'),
+    ('fsio.py',      '安全读取层（日志尾部/删除标记/时间戳）'),
+    ('ev.py',        '证据访问层（E01/raw → pytsk3 FS）'),
     ('forensic.py',  '证据访问层'),
     ('registry.py',  '注册表高频查询'),
     ('sqlite_tools.py', 'SQLite/WAL/LNK'),

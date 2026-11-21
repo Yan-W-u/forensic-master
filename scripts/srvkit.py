@@ -27,36 +27,40 @@ sys.path.insert(0, os.environ.get('CASE_DIR', '.'))
 sys.path.insert(0, _HERE)
 
 import pytsk3
+import fsio
 
 
 def utc(ts):
-    if not ts:
-        return '-'
-    return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    """epoch 秒 → 带 UTC 标记（统一口径）"""
+    return fsio.fmt_epoch(ts)
 
 
-def read_text(fs, path, limit=2 << 20):
-    try:
-        n = fs.open(path)
-        sz = n.info.meta.size or 0
-        return n.read_random(0, min(sz, limit)).decode('utf-8', 'replace')
-    except Exception:
-        return ''
+def read_text(fs, path, limit=None):
+    """普通文本。超限报警，不静默截断。"""
+    return fsio.read_text(fs, path, limit)
+
+
+def read_log(fs, path, tail=None):
+    """日志专用。
+
+    日志是追加写的：offset 0 是最旧的。
+    - tail=N     只读最后 N 字节 → 找「最后一次」「最近」
+    - tail=None  全量读（到上限）→ 统计「总共多少次」
+    """
+    return fsio.read_log(fs, path, tail)
 
 
 def ls(fs, path):
+    """列目录，已删除项标 [DELETED]"""
     out = []
-    try:
-        for en in fs.open_dir(path):
-            nm = en.info.name.name.decode('utf-8', 'replace')
-            if nm in ('.', '..'):
-                continue
-            m = en.info.meta
-            out.append((nm, m.size if m else 0,
-                        m.type == pytsk3.TSK_FS_META_TYPE_DIR, m))
-    except Exception:
-        pass
+    for nm, sz, isdir, deleted, m in fsio.ls(fs, path):
+        shown = (nm + ' [DELETED]') if deleted else nm
+        out.append((shown, sz, isdir, m))
     return out
+
+
+def ls_raw(fs, path):
+    return fsio.ls(fs, path)
 
 
 def cmd_profile(fs):
@@ -225,9 +229,19 @@ def cmd_ssh(fs):
 
     print('\n--- 认证日志（登录/失败/sudo）---')
     for p in ('/var/log/auth.log', '/var/log/secure'):
-        t = read_text(fs, p, 8 << 20)
-        if not t.strip():
+        # 先读尾部看「最近」，再全量统计
+        tail = read_log(fs, p, tail=2 << 20)
+        t = read_log(fs, p)
+        if not t.strip() and not tail.strip():
             continue
+        # 尾部里找最后一次成功登录
+        last_ok = None
+        for ln in tail.splitlines():
+            m2 = re.search(r'Accepted (\S+) for (\S+) from ([\d.]+)', ln)
+            if m2:
+                last_ok = (ln[:15], m2.group(1), m2.group(2), m2.group(3))
+        if last_ok:
+            print('  最近成功登录: %s  方式=%s 用户=%s 来源=%s' % last_ok)
         ok = re.findall(r'Accepted (\S+) for (\S+) from ([\d.]+)', t)
         bad = re.findall(r'Failed (\S+) for (?:invalid user )?(\S+) from ([\d.]+)', t)
         print('  %s: 成功 %d 次, 失败 %d 次' % (p, len(ok), len(bad)))

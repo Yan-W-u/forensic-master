@@ -455,3 +455,145 @@ crypto-agent        03:50:05   ← wrapper（题问"当前 ExecStart"取这个�
 - `mobile.md` —— 手机具体操作
 - `network.md` —— 流量具体操作
 - `iot.md` —— 嵌入式具体操作
+
+### 陷阱 36：日志从头读 = 拿到最旧的内容
+
+**现象**：`read_random(0, 2MB)` 读 `auth.log`。日志是**追加写**的，
+offset 0 是最旧的。于是「最后一次成功登录」拿到很早以前那次，
+「爆破次数」只统计了开头一小段。结果看起来完整，方向却是反的。
+
+**实测**（3.4 MB 构造日志）：
+
+```
+旧做法 read_random(0, 2MB)：
+   Accepted 24768 条，最后一条 old24767（8月1日）
+   含 FINAL_USER: False        ← 最新登录完全没读到
+
+新做法 read_log(tail=2MB)：
+   Accepted 24508 条，最后一条 FINAL_USER（9月3日）
+   含 FINAL_USER: True         ← 正确
+
+全量 read_log()：
+   40001 条（真值 40001）      ← 统计也对
+```
+
+**判据**：
+- 找「最近/最后一次/最后一个」→ 读**尾部**（`read_log(tail=N)`）
+- 统计「总共多少次/有多少」→ 读**全量**（有上限，超限报警）
+- 绝不用 `read_random(0, N)` 当"读日志"
+
+```python
+import fsio
+# 找最近
+tail = fsio.read_log(fs, '/var/log/auth.log', tail=2 << 20)
+# 全量统计
+full = fsio.read_log(fs, '/var/log/auth.log')
+```
+
+**这比报错恶劣**：不报错、不空、看着完整，方向反了。
+
+### 陷阱 37：hive 静默截断到 64 MB
+
+**现象**：`read(fs, path, limit=64 << 20)` 读 SOFTWARE hive。
+实际 71565312 字节（68 MB），**超了 4 MB**，写出来是半截 hive。
+喂给 regipy → `Bad subkey at offset N` 或只读到部分键。
+而它只会打印 `len(d)`，67108864 这个数字不会报警。
+
+**实测**（龙信杯驿站 PC）：
+
+```
+SOFTWARE  71565312 字节 → 旧上限 64 MB 截断 4 MB
+SYSTEM    12058624 字节 → 未超，正常
+```
+
+**修法**：hive 用独立上限，超限明确警告。
+
+```python
+data = fsio.read_hive(fs, path)   # 默认 512 MB，超限警告
+# 需要更大: set FSIO_MAX_HIVE=1073741824
+```
+
+**判据**：hive 读取后先比 `len(data)` 与 `meta.size`，不等就是截断。
+
+### 陷阱 38：已删除文件混在正常文件里
+
+**现象**：`ls()` 只看 `m.type == TSK_FS_META_TYPE_DIR`，从不看
+`m.flags & TSK_FS_META_FLAG_UNALLOC`。而 TSK 的 `open_dir` 会**把已删除条目
+也吐出来**，于是删的和没删的混在同一张表里。
+
+「最后访问的文件是哪个」「某文件何时被删」这类题，混进一条已删除项就是错答。
+
+**修法**：
+
+```python
+import fsio
+rows = fsio.ls(fs, '/path')        # (name, size, is_dir, is_deleted, meta)
+for nm, sz, isdir, deleted, m in rows:
+    if deleted:
+        print('[DELETED] %s' % nm)
+```
+
+**常量对照**：
+
+| flags | 含义 |
+|---|---|
+| `0x0001` | `TSK_FS_META_FLAG_ALLOC` 正常 |
+| `0x0002` | `TSK_FS_META_FLAG_UNALLOC` **已删除** |
+| `0x0003` | 两者都有（不合规，按已删除处理） |
+
+**判据**：`flags & 0x2` 为真 = 已删除。
+
+### 陷阱 39：两套时间口径用同一个格式打印
+
+**现象**：`ft2dt()` 返回 naive datetime（隐式 UTC），
+`dt_utc()` 返回带 tz 的 UTC。两者都过同一个 `%-28s crtime=%s` 打印，
+输出里没有任何标记。一个表里既有 epoch 秒又有 FILETIME 转换值，
+看的人分不清哪个该 +8。
+
+**修法**：统一带 tz，打印时标注。
+
+```python
+import fsio
+fsio.fmt_epoch(m.crtime)              # 2026-09-01 06:13:20 UTC
+fsio.fmt(fsio.ts_epoch(t), local=True)  # 2026-09-01 14:13:20 LCL
+fsio.fmt_filetime(ft)                 # FILETIME 也走同一格式
+```
+
+**判据**：输出里必须能看到 `UTC` 或 `LCL`。没有标记的时间戳不可信。
+
+**实测一致性**（同一时刻两种来源）：
+
+```
+FILETIME 134326944000000000 → 2026-09-01 00:00:00 UTC
+epoch    1788220800         → 2026-09-01 00:00:00 UTC
+本地                          → 2026-09-01 08:00:00 LCL
+```
+
+### 陷阱 40：except 全吞，三种故障一个样
+
+**现象**：
+
+```python
+except Exception:
+    pass          # ls()     → 返回空列表
+except Exception:
+    return ''     # read_text() → 返回空字符串
+```
+
+「文件不存在」「权限拒绝」「读到一半失败」全变成空值。
+和陷阱 33 的「tshark 静默返回 0 行」是同一类错误。
+
+**修法**：分类提示到 stderr。
+
+```python
+try:
+    n = fs.open(path)
+except FileNotFoundError:
+    fsio.warn('文件不存在: %s' % path)     # 区分
+except PermissionError:
+    fsio.warn('权限拒绝: %s' % path)       # 区分
+except Exception as e:
+    fsio.warn('打开失败 %s: %s' % (path, e))
+```
+
+**判据**：返回值空 + stderr 无提示 = 假阴性。必须能看到原因。

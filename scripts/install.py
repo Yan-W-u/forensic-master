@@ -293,6 +293,8 @@ def main():
     ap.add_argument('--py-only', action='store_true')
     ap.add_argument('--bin-only', action='store_true')
     ap.add_argument('--quiet', action='store_true', help='检查时不列全部')
+    ap.add_argument('--yes', '-y', action='store_true',
+                    help='不再询问，直接安装（无人值守用）')
     ap.add_argument('--profile', default='core',
                     choices=['docs', 'lite', 'core', 'automotive', 'full'],
                     help='安装档次：docs=只文档 / lite=轻量(磁盘+流量) / '
@@ -334,8 +336,14 @@ def main():
     do_bin = not args.py_only
     only_crit = args.critical and not args.all
 
-    if args.all:
+    if args.all and args.profile == 'core':
+        # -All 且没显式指定 profile → 装全部
         py_list, bin_list = manifest.profile_items('full')
+    elif args.all:
+        # -All + 显式 profile → 以 profile 为准，并告警
+        print('! 同时给了 --all 和 --profile %s，以 profile 为准'
+              % args.profile)
+        py_list, bin_list = manifest.profile_items(args.profile)
     elif args.critical:
         py_list, bin_list = manifest.profile_items('core')
         py_list = [x for x in py_list if x['critical']]
@@ -356,11 +364,20 @@ def main():
     print('Python 库：需装 %d 个（已有 %d）' % (len(py_todo), len(py_list) - len(py_todo)))
     print('二进制  ：需装 %d 个（已有 %d）' % (len(bn_todo), len(bin_list) - len(bn_todo)))
 
-    if not args.all and not args.critical:
-        ans = input('\n开始安装？[Y/n] ').strip().lower()
-        if ans and ans not in ('y', 'yes', ''):
-            print('已取消。')
-            return
+    # 无人值守：--yes 或 非交互式 stdin 时直接开装
+    if not args.all and not args.critical and not args.yes:
+        interactive = sys.stdin.isatty()
+        if not interactive:
+            print('\n非交互式环境，直接安装（用 --no-yes 可强制询问）')
+        else:
+            try:
+                ans = input('\n开始安装？[Y/n] ').strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print('\n已取消。')
+                return
+            if ans and ans not in ('y', 'yes', ''):
+                print('已取消。')
+                return
 
     total_ok = total_fail = 0
     if do_py and py_todo:

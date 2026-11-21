@@ -21,7 +21,7 @@ git clone https://github.com/Yan-W-u/forensic-master.git
 cd forensic-master/references
 ```
 
-先读 `quickwin.md`（三档分类法）和 `traps.md`（35 条陷阱）。
+先读 `quickwin.md`（三档分类法）和 `traps.md`（40 条陷阱）。
 
 ### 要跑工具？按需选档
 
@@ -223,7 +223,7 @@ python scripts/srvkit.py ssh srv
 | 文件 | 体量 | 覆盖 |
 |---|---|---|
 | `quickwin.md` | 11.6 KB | **三档分类法**、源 × 题矩阵、A 档验证 |
-| `traps.md` | 20.9 KB | **35 条失分陷阱** + 26 项开工检查表 |
+| `traps.md` | 20.9 KB | **40 条失分陷阱** + 26 项开工检查表 |
 | `windows.md` | 37.9 KB | 注册表/事件日志/$J/时间戳/DPAPI/ShellBags/**hive 损坏诊断**/shellcode |
 | `linux.md` | 31.5 KB | 配置/账号/**cron**/**bash_history**/**SSH**/Docker/Web/**反取证**/Go-Rust |
 | `mobile.md` | 30.0 KB | iOS/WhatsApp/**MIUI .bak**/protobuf/**明文库普查**/Android/OCR |
@@ -256,7 +256,7 @@ python scripts/srvkit.py ssh srv
 
 ---
 
-## 七、35 条陷阱（节选）
+## 七、40 条陷阱（节选）
 
 - **陷阱 20**：密码「看起来是编码」就去解码 —— 花了 25 分钟试 15 种 KDF 组合全败，真密码就是那串 Base64 字面量
 - **陷阱 21**：加密容器整卷解密 —— 写了 105 GiB 全量解密脚本跑 40 分钟，而挂载只要 3 秒
