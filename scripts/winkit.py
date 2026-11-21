@@ -49,16 +49,21 @@ def ft2dt(ft):
     return fsio.ts_filetime(ft)
 
 
-def read(fs, path, limit=None, what='text'):
-    """读文件。超上限报警，不静默截断。"""
-    if what == 'hive':
-        return fsio.read_hive(fs, path)
-    data, _ = fsio.read_all(fs, path, limit=limit, what=what)
-    return data
+def read(fs, path, kind='text'):
+    """读文件，返回 bytes。
+
+    kind: 'text' | 'hive' | 'evtx' | 'log' —— 决定上限，**不接受 limit**。
+    要放宽上限请设环境变量 FSIO_MAX_TEXT / FSIO_MAX_HIVE / FSIO_MAX_EVTX。
+
+    需要知道是否被截断时，直接用 fsio.read_*() 拿 ReadResult。
+    """
+    fn = {'hive': fsio.read_hive, 'evtx': fsio.read_evtx,
+          'log': fsio.read_log}.get(kind, fsio.read_text)
+    return fn(fs, path).data
 
 
-def read_text(fs, path, limit=None):
-    return fsio.read_text(fs, path, limit)
+def read_text(fs, path):
+    return fsio.text(fs, path)
 
 
 # 目录枚举统一走 fsio.Entry。name 永远是干净文件名，可原样拼路径。
@@ -117,7 +122,8 @@ def cmd_hives(fs):
         T['%s_UsrClass' % nm] = '/Users/%s/AppData/Local/Microsoft/Windows/UsrClass.dat' % nm
     for name, p in T.items():
         try:
-            d = fsio.read_hive(fs, p)
+            r = fsio.read_hive(fs, p)
+            d = r.data
             if d:
                 open(os.path.join(OUTROOT, name), 'wb').write(d)
                 print('  %-28s %10d' % (name, len(d)))
@@ -502,7 +508,7 @@ def cmd_pf(fs):
         for e in items:
             try:
                 # e.name 是干净文件名，能原样拼回路径
-                data = read(fs, '/Windows/Prefetch/' + e.name)
+                data = read(fs, '/Windows/Prefetch/' + e.name, 'text')
                 if data:
                     open(os.path.join(out, e.name), 'wb').write(data)
             except Exception as ex:

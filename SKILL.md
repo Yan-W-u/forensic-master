@@ -686,7 +686,7 @@ python <skill>\scripts\fsio.py
 | 问题 | 旧做法 | fsio |
 |---|---|---|
 | 日志方向 | `read_random(0, 2MB)` 拿最旧 | `read_log(tail=N)` 拿最新 |
-| hive 截断 | 静默限 64 MB | `read_hive()` 限 512 MB 且报警 |
+| hive 截断 | 静默限 64 MB | `read_hive()` 512 MB，返回 ReadResult |\n| evtx 截断 | 落回 text 的 8 MB | `read_evtx()` 512 MB |\n| 截断不可见 | 只吼 stderr | `r.truncated` 程序可判 |
 | 删除文件 | 混在正常项里 | `Entry.deleted` 字段，默认排除 |
 | 时间口径 | 两种格式混打 | `fmt_epoch`/`fmt_filetime` 统一带 UTC/LCL |
 

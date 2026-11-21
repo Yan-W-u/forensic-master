@@ -514,6 +514,32 @@ data = fsio.read_hive(fs, path)   # 默认 512 MB，超限警告
 ```
 
 **判据**：hive 读取后先比 `len(data)` 与 `meta.size`，不等就是截断。
+**同类：evtx 落回文本上限**
+
+比 hive 更隐蔽 —— `cmd_evtx` 走 `read()` 的 text 上限（8 MB），
+而 `Security.evtx` 动辄几十 MB。截断后 EvtxECmd 解析**缺事件但不报错**，
+导出的 CSV 看着完整，实际少了记录。
+
+**实测**（龙信杯驿站 PC，150 个 evtx）：
+
+```
+Microsoft-Windows-Store%4Operational.evtx   11,603,968 字节
+  read_text  (8 MB)  → 8,388,608  truncated=True   缺 3,215,360 字节
+  read_evtx  (512MB) → 11,603,968 truncated=False  完整
+```
+
+**修法**：类型即函数，各自写死上限。
+
+```python
+fsio.read_text(fs, p)   # 8 MB
+fsio.read_evtx(fs, p)   # 512 MB  ← evtx 必须走这条
+fsio.read_hive(fs, p)   # 512 MB
+fsio.read_log(fs, p)    # 256 MB
+```
+
+**截断语义**：返回 `ReadResult(data, truncated, size_expected, size_actual)`。
+`truncated=True` 时调用方在**程序里**能判断，不只在 stderr 吼一声。
+要求完整用 `check_complete(r)`，截断则抛 IOError。
 
 ### 陷阱 38：已删除文件混在正常文件里
 

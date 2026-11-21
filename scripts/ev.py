@@ -277,13 +277,20 @@ def auto_fs(path, prefer=None):
 # ============================================================
 # 便利函数
 # ============================================================
-def read_file(f, path, limit=64 << 20):
-    n = f.open(path)
-    return n.read_random(0, min(n.info.meta.size or 0, limit))
+def read_file(f, path):
+    """读整个文件。委托给 fsio，上限由文件类型决定。
+
+    返回 ReadResult(data, truncated, size_expected, size_actual)。
+    """
+    import fsio as _fsio
+    return _fsio.read_text(f, path)
 
 
-def read_text(f, path, limit=4 << 20):
-    return read_file(f, path, limit).decode('utf-8', 'replace')
+def read_text(f, path):
+    """读文本，返回字符串。截断时 stderr 已警告。"""
+    import fsio as _fsio
+    return _fsio.text(f, path)
+
 
 
 def ls(f, path, show_deleted=False):

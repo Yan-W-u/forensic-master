@@ -35,9 +35,9 @@ def utc(ts):
     return fsio.fmt_epoch(ts)
 
 
-def read_text(fs, path, limit=None):
-    """普通文本。超限报警，不静默截断。"""
-    return fsio.read_text(fs, path, limit)
+def read_text(fs, path):
+    """普通文本，返回字符串。截断时 stderr 已警告。"""
+    return fsio.text(fs, path)
 
 
 def read_log(fs, path, tail=None):
@@ -47,7 +47,7 @@ def read_log(fs, path, tail=None):
     - tail=N     只读最后 N 字节 → 找「最后一次」「最近」
     - tail=None  全量读（到上限）→ 统计「总共多少次」
     """
-    return fsio.read_log(fs, path, tail)
+    return fsio.log_text(fs, path, tail)
 
 
 # 目录枚举统一走 fsio.Entry。name 永远是干净文件名，可原样拼路径。
