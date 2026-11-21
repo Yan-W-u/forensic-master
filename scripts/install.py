@@ -227,7 +227,7 @@ def install_bin(items):
 # ============================================================
 # 主流程
 # ============================================================
-def do_check(verbose=True):
+def do_check(verbose=True, profile='core'):
     hr('依赖检查')
     py = check_py()
     bn = check_bin()
@@ -293,6 +293,10 @@ def main():
     ap.add_argument('--py-only', action='store_true')
     ap.add_argument('--bin-only', action='store_true')
     ap.add_argument('--quiet', action='store_true', help='检查时不列全部')
+    ap.add_argument('--profile', default='core',
+                    choices=['docs', 'lite', 'core', 'automotive', 'full'],
+                    help='安装档次：docs=只文档 / lite=轻量(磁盘+流量) / '
+                         'core=常用全量(默认) / automotive=加车联网 / full=全装')
     args = ap.parse_args()
 
     hr('forensic-master 部署器')
@@ -308,16 +312,39 @@ def main():
     os.makedirs(FT, exist_ok=True)
 
     if args.check:
-        ok = do_check(verbose=not args.quiet)
+        ok = do_check(verbose=not args.quiet, profile=args.profile)
         sys.exit(0 if ok else 1)
+
+    # ---- docs 档：只读手册，零依赖 ----
+    if args.profile == 'docs':
+        hr('docs 档：不装任何依赖')
+        print('12 份手册在 references/ 下，纯 Markdown，直接打开就能读：')
+        for f in ('quickwin.md', 'traps.md', 'windows.md', 'linux.md',
+                  'mobile.md', 'network.md', 'iot.md', 'automotive.md',
+                  'containers.md', 'case2.md', 'howto.md', 'parallel.md'):
+            print('   references/%s' % f)
+        print('\n需要跑工具时再装：')
+        print('   python scripts/install.py --profile lite    # 约 300 MB')
+        print('   python scripts/install.py --profile core    # 约 800 MB')
+        print('   python scripts/install.py --profile full    # 约 3 GB')
+        return
 
     # 决定装什么
     do_py = not args.bin_only
     do_bin = not args.py_only
     only_crit = args.critical and not args.all
 
-    py_list = [x for x in manifest.PY_LIBS if not only_crit or x['critical']]
-    bin_list = [x for x in manifest.tools() if not only_crit or x['critical']]
+    if args.all:
+        py_list, bin_list = manifest.profile_items('full')
+    elif args.critical:
+        py_list, bin_list = manifest.profile_items('core')
+        py_list = [x for x in py_list if x['critical']]
+        bin_list = [x for x in bin_list if x['critical']]
+    else:
+        py_list, bin_list = manifest.profile_items(args.profile)
+
+    print('\n档次: %s —— %s' % (args.profile,
+                               manifest.PROFILES[args.profile]['desc']))
 
     # 先查已装的，避免重复
     py_now = {x['import_']: ok for x, ok, _ in check_py()}
@@ -364,7 +391,7 @@ def main():
 
     hr('安装完成')
     print('%s 成功 %d / 失败 %d' % (OK, total_ok, total_fail))
-    do_check(verbose=False)
+    do_check(verbose=False, profile=args.profile)
 
     print('\n下一步：')
     print('  1. 重启 DSH（让它重新扫描 skills 目录）')

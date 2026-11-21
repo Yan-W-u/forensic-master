@@ -15,7 +15,8 @@
   python winkit.py browser  <key> [user]  浏览器数据摘要
   python winkit.py recent   <key> [user]  LNK/JumpList/回收站
 
-<key> 为 ev.py 里的 FS 名称（yizhan / kurier 等）
+<image> 镜像路径（.E01/.raw/.img）或 $CASE_DIR/images.json 里的 key
+         可选 --lba N 指定分区起始块
 """
 import sys
 import os
@@ -26,13 +27,15 @@ import codecs
 import datetime
 import subprocess
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# 技能目录必须优先（否则案件目录里的同名 ev.py 会抢占）
+_HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.environ.get('CASE_DIR', '.'))
+sys.path.insert(0, _HERE)
 
 import pytsk3
 
 EZ = os.environ.get('EZTOOLS', r'D:\ForensicTools\eztools')
-OUTROOT = r'<WORK>\win'
+OUTROOT = os.environ.get('WIN_OUT', os.path.join(os.getcwd(), 'win_out'))
 
 
 def dt_utc(ts):
@@ -394,8 +397,12 @@ def cmd_software(fs):
         return
 
     print('\n  → 降级：从 Program Files 目录 + Amcache 推断')
-    for root in ('/Program Files', '/Program Files (x86)', '/Users/%s/AppData/Local/Programs'
-                 % 'parcel_station'):
+    roots = ['/Program Files', '/Program Files (x86)']
+    # 自动发现用户目录，不写死用户名
+    for un, _s, isdir, _m in ls(fs, '/Users'):
+        if isdir and un not in ('All Users', 'Default', 'Default User', 'Public'):
+            roots.append('/Users/%s/AppData/Local/Programs' % un)
+    for root in roots:
         items = [(n, s, m) for n, s, d, m in ls(fs, root) if d]
         if not items:
             continue
@@ -503,10 +510,18 @@ def cmd_pf(fs):
         print('\n已导出到 %s，可跑 PECmd' % out)
 
 
-def cmd_browser(fs, user):
+def cmd_browser(fs, user=None):
     print('=' * 76)
     print('浏览器数据 —— %s' % user)
     print('=' * 76)
+    if not user:
+        users = [n for n, s, d, m in ls(fs, '/Users') if d
+                 and n not in ('All Users', 'Default', 'Default User', 'Public')]
+        if not users:
+            print('  未找到用户目录')
+            return
+        user = users[0]
+        print('  自动选用户: %s' % user)
     base = '/Users/%s/AppData/Local' % user
     for br, rel in [('Chrome', 'Google/Chrome/User Data/Default'),
                     ('Edge', 'Microsoft/Edge/User Data/Default')]:
@@ -527,10 +542,18 @@ def cmd_browser(fs, user):
                 pass
 
 
-def cmd_recent(fs, user):
+def cmd_recent(fs, user=None):
     print('=' * 76)
     print('文件痕迹 —— %s' % user)
     print('=' * 76)
+    if not user:
+        users = [n for n, s, d, m in ls(fs, '/Users') if d
+                 and n not in ('All Users', 'Default', 'Default User', 'Public')]
+        if not users:
+            print('  未找到用户目录')
+            return
+        user = users[0]
+        print('  自动选用户: %s' % user)
     D = '/Users/%s/AppData/Roaming/Microsoft/Windows' % user
     for label, p in [('Recent(LNK)', D + '/Recent'),
                      ('AutomaticDestinations', D + '/Recent/AutomaticDestinations'),
@@ -555,16 +578,16 @@ def main():
         return
     cmd, key = sys.argv[1], sys.argv[2]
     arg = sys.argv[3] if len(sys.argv) > 3 else None
-    from ev import fs
-    f = fs(key)
+    from ev import open_fs
+    f = open_fs(key, lba=int(os.environ.get('CASE_LBA', 0)) or None)
     m = {'info': cmd_info, 'hives': cmd_hives, 'sysinfo': cmd_sysinfo,
          'accounts': cmd_accounts, 'users': cmd_users, 'usb': cmd_usb,
          'software': cmd_software, 'autorun': cmd_autorun, 'evtx': cmd_evtx,
          'pf': cmd_pf}
     if cmd == 'browser':
-        cmd_browser(f, arg or 'parcel_station')
+        cmd_browser(f, arg)
     elif cmd == 'recent':
-        cmd_recent(f, arg or 'parcel_station')
+        cmd_recent(f, arg)
     elif cmd in m:
         m[cmd](f)
     else:

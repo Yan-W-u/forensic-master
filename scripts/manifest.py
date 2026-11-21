@@ -253,6 +253,81 @@ SKILL_SCRIPTS = [
 ]
 
 
+# ============================================================
+# 五、安装档次（profile）
+# ============================================================
+# 只为读手册的人不该装 3GB 工具。
+# docs 档 = 0 依赖，纯文本可读。
+
+PROFILES = {
+    'docs': {
+        'desc': '只读手册，不装任何依赖（12 份 md 直接可读）',
+        'py': [],
+        'bin': [],
+    },
+    'lite': {
+        'desc': '轻量：磁盘镜像 + 文件系统 + 流量（约 300 MB）',
+        'py': ['pyewf', 'pytsk3', 'regipy', 'pycryptodome', 'cryptography',
+               'Pillow', 'pefile', 'scapy', 'dissect.target'],
+        'bin': ['Wireshark (tshark)', '7-Zip'],
+    },
+    'core': {
+        'desc': '常用全量：再加 Windows 痕迹 + OCR + 哈希破解（约 800 MB）',
+        'py': ['pyewf', 'pytsk3', 'regipy', 'pycryptodome', 'cryptography',
+               'Pillow', 'pefile', 'scapy', 'dissect.target', 'dissect.regf',
+               'dissect.eventlog', 'rapidocr_onnxruntime', 'oletools',
+               'capstone', 'pyelftools', 'dpkt', 'pandas', 'openpyxl',
+               'python-docx', 'exifread'],
+        'bin': ['Wireshark (tshark)', '7-Zip', 'VeraCrypt', 'hashcat',
+                'Detect It Easy', 'EzTools (MFTECmd/PECmd/LECmd/...)'],
+    },
+    'automotive': {
+        'desc': 'core + 车联网（CAN/UDS/DBC/GPS）',
+        'py': 'CORE_PLUS',
+        'extra_py': ['python-can', 'cantools', 'canmatrix', 'asammdf',
+                     'udsoncan', 'pyserial', 'obd', 'pynacl'],
+        'bin': 'CORE_BIN_PLUS',
+        'extra_bin': ['SavvyCAN'],
+    },
+    'full': {
+        'desc': '全部（含内存/逆向/手机/APK，约 3 GB）',
+        'py': 'ALL',
+        'bin': 'ALL',
+    },
+}
+
+
+def profile_items(name):
+    """返回 (py_libs, bin_tools) 两个 manifest 条目的列表"""
+    if name not in PROFILES:
+        raise KeyError('未知档次: %s' % name)
+    p = PROFILES[name]
+
+    # --- Python ---
+    if p['py'] == 'ALL':
+        py = list(PY_LIBS)
+    elif p['py'] == 'CORE_PLUS':
+        core = PROFILES['core']['py']
+        names = set(core) | set(p.get('extra_py', []))
+        py = [x for x in PY_LIBS if x['pip'] in names]
+    else:
+        names = set(p['py']) | set(p.get('extra_py', []))
+        py = [x for x in PY_LIBS if x['pip'] in names]
+
+    # --- 二进制 ---
+    if p['bin'] == 'ALL':
+        bn = list(_BIN)
+    elif p['bin'] == 'CORE_BIN_PLUS':
+        core = PROFILES['core']['bin']
+        names = set(core) | set(p.get('extra_bin', []))
+        bn = [x for x in _BIN if x['name'] in names]
+    else:
+        names = set(p['bin']) | set(p.get('extra_bin', []))
+        bn = [x for x in _BIN if x['name'] in names]
+
+    return py, bn
+
+
 def tools():
     return _BIN
 

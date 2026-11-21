@@ -12,7 +12,7 @@
   python srvkit.py web      <key>                 nginx/apache 配置摘要
   python srvkit.py timeline <key>                 关键文件 mtime 排序
 
-<key> 为 ev.py 里的 FS 名称（yizhan / srv1 / srv2 等）
+<image> 镜像路径（.E01/.raw/.img）或 $CASE_DIR/images.json 里的 key
 """
 import sys
 import os
@@ -21,8 +21,10 @@ import json
 import datetime
 import struct
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# 技能目录必须优先（否则案件目录里的同名 ev.py 会抢占）
+_HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.environ.get('CASE_DIR', '.'))
+sys.path.insert(0, _HERE)
 
 import pytsk3
 
@@ -376,8 +378,8 @@ def main():
         print(__doc__)
         return
     cmd, key = sys.argv[1], sys.argv[2]
-    from ev import fs
-    f = fs(key)
+    from ev import open_fs
+    f = open_fs(key, lba=int(os.environ.get('CASE_LBA', 0)) or None)
     fn = {'profile': cmd_profile, 'accounts': cmd_accounts, 'cron': cmd_cron,
           'ssh': cmd_ssh, 'docker': cmd_docker, 'web': cmd_web,
           'timeline': cmd_timeline}.get(cmd)

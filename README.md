@@ -12,14 +12,44 @@
 
 ## 一、部署
 
-### 方式 A：一键脚本（推荐）
+### 只要读手册？零依赖
+
+12 份 Markdown 直接打开就能读，**不需要装任何东西**：
+
+```bash
+git clone https://github.com/Yan-W-u/forensic-master.git
+cd forensic-master/references
+```
+
+先读 `quickwin.md`（三档分类法）和 `traps.md`（35 条陷阱）。
+
+### 要跑工具？按需选档
+
+| 档次 | 内容 | 体积 | 命令 |
+|---|---|---|---|
+| `docs` | 只读手册 | **0** | `python scripts/install.py --profile docs` |
+| `lite` | 磁盘镜像 + 文件系统 + 流量 | ~300 MB | `--profile lite` |
+| `core` | 加 Windows 痕迹 + OCR + 破解 | ~800 MB | `--profile core`（默认） |
+| `automotive` | core + 车联网 | ~1 GB | `--profile automotive` |
+| `full` | 全部（内存/逆向/手机/APK） | ~3 GB | `--profile full` |
+
+```bash
+# 例：只做磁盘和流量分析
+python scripts/install.py --profile lite
+
+# 例：全都要
+python scripts/install.py --profile full
+```
+
+### 一键部署（含技能本体）
 
 **Windows**
 
 ```powershell
 git clone https://github.com/Yan-W-u/forensic-master.git
 cd forensic-master
-powershell -ExecutionPolicy Bypass -File deploy.ps1
+powershell -ExecutionPolicy Bypass -File deploy.ps1              # core 档
+powershell -ExecutionPolicy Bypass -File deploy.ps1 -Profile lite
 ```
 
 **Linux / macOS**
@@ -28,63 +58,72 @@ powershell -ExecutionPolicy Bypass -File deploy.ps1
 git clone https://github.com/Yan-W-u/forensic-master.git
 cd forensic-master
 chmod +x deploy.sh
-./deploy.sh
-```
-
-脚本会做三件事：
-
-1. 检查 Python 3.9+ 与 pip
-2. 把技能本体复制到 `~/.dsh/skills/forensic-master`（旧版本自动备份）
-3. 装依赖：38 个 Python 库 + 11 个二进制工具
-
-### 方式 B：手动
-
-```bash
-# 1. 复制技能本体
-cp -r forensic-master ~/.dsh/skills/
-
-# 2. 装 Python 库
-pip install -i https://pypi.tuna.tsinghua.edu.cn/simple \
-  pyewf pytsk3 regipy pefile pycryptodome cryptography Pillow \
-  rapidocr_onnxruntime scapy python-can cantools canmatrix udsoncan \
-  dissect.target dissect.regf oletools volatility3 pynacl exifread \
-  capstone pyelftools lief unicorn pwntools yara-python dpkt pyshark \
-  requests asammdf pyserial obd androguard frida-tools pandas openpyxl \
-  python-docx binwalk
-
-# 3. 二进制工具：装 Wireshark / 7-Zip / VeraCrypt，下载 EzTools 全家桶
-#    详见 scripts/manifest.py 里的 url 字段
-
-# 4. 自检
-python ~/.dsh/skills/forensic-master/scripts/install.py --check
+./deploy.sh                    # core 档
+./deploy.sh --profile lite     # 轻量
 ```
 
 ### 部署选项
 
 ```powershell
-.\deploy.ps1 -Check        # 只检查，不装
-.\deploy.ps1 -Critical     # 只装关键项（快速可用）
-.\deploy.ps1 -All          # 装全部（含可选）
-.\deploy.ps1 -SkillOnly    # 只部署技能本体
+.\deploy.ps1 -Check              # 只检查
+.\deploy.ps1 -Profile docs       # 只部署技能本体，零依赖
+.\deploy.ps1 -Profile full       # 全装
+.\deploy.ps1 -SkillOnly          # 只部署本体，不碰依赖
 ```
 
-### 环境变量（可选）
+### 工具集需要一个证据访问层
 
-脚本默认路径可按需覆盖：
+`winkit/srvkit/phonekit` 依赖 `scripts/ev.py`（已随仓库提供）。给检材有三种方式：
 
-| 变量 | 默认（Windows） | 说明 |
-|---|---|---|
-| `FORENSIC_TOOLS` | `D:\ForensicTools` | 取证工具根目录 |
-| `CASE_DIR` | `.` | 案件工作目录（放证据访问层脚本） |
-| `EZTOOLS` | `%FORENSIC_TOOLS%\eztools` | EzTools 位置 |
-| `WIRESHARK_DIR` | `C:\Program Files\Wireshark` | tshark 位置 |
-| `BINUTILS_DIR` | `E:\bianyiqi\mingw64\bin` | strings/objdump 位置 |
-| `WIN_OUT` / `PHONE_OUT` / `NET_OUT` | `./win_out` 等 | 输出目录 |
+**1. 直接传路径（最简单）**
 
 ```powershell
-setx FORENSIC_TOOLS "E:\Tools"
-setx CASE_DIR "D:\case2026"
+# 自动列分区、挑最大的
+python scripts/winkit.py sysinfo "D:\case\disk.E01"
+
+# 指定分区 LBA
+python scripts/winkit.py sysinfo "D:\case\disk.E01" --lba 104448
+
+# 先看有哪些分区
+python scripts/ev.py "D:\case\disk.E01" --parts
 ```
+
+**2. 环境变量**
+
+```powershell
+set CASE_IMAGE=D:\case\disk.E01
+set CASE_LBA=104448
+python scripts/winkit.py sysinfo
+```
+
+**3. 多检材映射文件**（案件目录下建 `images.json`）
+
+```json
+{
+  "pc":  {"path": "D:/case/PC.E01",  "lba": 104448},
+  "srv": {"path": "D:/case/SRV.E01", "lba": 4200448}
+}
+```
+
+```powershell
+set CASE_DIR=D:\case
+python scripts/winkit.py sysinfo pc
+python scripts/srvkit.py ssh srv
+```
+
+`ev.py` 支持 `.E01/.Ex01`（pyewf）、`.raw/.dd/.img`（直读）。
+
+### 环境变量
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `CASE_DIR` | 当前目录 | 找 `images.json` 的地方 |
+| `CASE_IMAGE` | — | 默认镜像路径 |
+| `CASE_LBA` | 0 | 默认分区起始 |
+| `FORENSIC_TOOLS` | `D:\ForensicTools` | 二进制工具根目录 |
+| `EZTOOLS` | `%FORENSIC_TOOLS%\eztools` | EzTools 位置 |
+| `WIRESHARK_DIR` | `C:\Program Files\Wireshark` | tshark 位置 |
+| `WIN_OUT` / `PHONE_OUT` / `NET_OUT` | `./win_out` 等 | 输出目录 |
 
 ---
 
@@ -125,7 +164,7 @@ setx CASE_DIR "D:\case2026"
 
 完整清单（含下载地址）见 `scripts/manifest.py`。
 
-### 技能自带工具（无需安装）
+### 技能自带工具（随仓库提供，需 ev.py 读检材）
 
 | 工具 | 子命令 | 用途 |
 |---|---|---|

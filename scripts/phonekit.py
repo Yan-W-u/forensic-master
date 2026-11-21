@@ -19,10 +19,12 @@ import sqlite3
 import tarfile
 import shutil
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# 技能目录必须优先（否则案件目录里的同名 ev.py 会抢占）
+_HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.environ.get('CASE_DIR', '.'))
+sys.path.insert(0, _HERE)
 
-OUTROOT = r'<WORK>\phone_out'
+OUTROOT = os.environ.get('PHONE_OUT', os.path.join(os.getcwd(), 'phone_out'))
 
 
 def find_ab_start(path):

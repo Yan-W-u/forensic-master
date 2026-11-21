@@ -16,7 +16,8 @@ param(
     [switch]$All,
     [switch]$Critical,
     [switch]$SkillOnly,
-    [string]$Target = ""
+    [string]$Target = "",
+    [string]$Profile = "core"
 )
 
 $ErrorActionPreference = 'Continue'
@@ -102,6 +103,7 @@ if (-not $SkillOnly) {
     if ($Check)    { $args += '--check' }
     if ($All)      { $args += '--all' }
     if ($Critical) { $args += '--critical' }
+    $args += @('--profile', $Profile)
     & $py $InstallPy @args
 }
 
