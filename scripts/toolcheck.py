@@ -19,6 +19,43 @@ def resolve(p):
     return os.path.join(FT, p)
 
 
+
+# ============================================================
+# 5. 冒烟测试：能 import 不等于能跑
+# ============================================================
+def smoke(scripts_dir):
+    """对每个 kit 用空参数调一次。
+
+    只 import 会漏掉函数体里的崩溃（tuple 没有 .strip() 这类），
+    实际跑一遍才发现。
+    """
+    import subprocess
+    print('\n[5] 冒烟测试（空参数调用）')
+    kits = ['winkit.py', 'srvkit.py', 'phonekit.py', 'netkit.py',
+            'iotkit.py', 'hexins.py', 'ev.py', 'fsio.py']
+    bad = []
+    for fn in kits:
+        pth = os.path.join(scripts_dir, fn)
+        if not os.path.exists(pth):
+            continue
+        try:
+            r = subprocess.run([sys.executable, pth], capture_output=True,
+                               text=True, encoding='utf-8', errors='replace',
+                               cwd=os.environ.get('TEMP', '.'))
+            err = r.stderr or ''
+            if 'Traceback' in err:
+                lines = [l for l in err.splitlines() if l.strip()]
+                msg = lines[-1][:70] if lines else '?'
+                bad.append((fn, msg))
+                print('  BAD %-14s %s' % (fn, msg))
+            else:
+                print('  OK  %-14s' % fn)
+        except Exception as e:
+            bad.append((fn, str(e)[:60]))
+            print('  BAD %-14s %s' % (fn, str(e)[:60]))
+    return bad
+
+
 def main():
     print('=' * 68)
     print('forensic-master 工具链自检')
@@ -88,6 +125,11 @@ def main():
         else:
             print('  CRIT %-22s 缺失！' % fn)
             miss_crit.append(fn)
+
+    # ---------- 5. 冒烟 ----------
+    bad = smoke(here)
+    for fn, why in bad:
+        miss_crit.append('%s 冒烟失败: %s' % (fn, why))
 
     # ---------- 汇总 ----------
     print('\n' + '=' * 68)

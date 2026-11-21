@@ -215,6 +215,53 @@ def read_head(fs, path, n=16):
         raise ReadFailed(path, '读头失败: %s' % e)
 
 
+
+# ============================================================
+# 流式读取 —— 用于「全量统计，不能截断」的场合
+# ============================================================
+def iter_lines(fs, path, chunk=1 << 20):
+    """逐块读、逐行 yield。内存恒定，**永不截断**。
+
+    日志统计（爆破次数、IP TOP5）必须走这条：
+    读进内存再统计，MAX_LOG 一超就少算几次，错得还很合理。
+
+    用法:
+        for ln in fsio.iter_lines(fs, '/var/log/auth.log'):
+            if 'Accepted' in ln: ...
+    """
+    try:
+        node = fs.open(path)
+    except FileNotFoundError:
+        raise ReadFailed(path, '文件不存在')
+    except PermissionError:
+        raise ReadFailed(path, '权限拒绝')
+    except Exception as e:
+        raise ReadFailed(path, '打不开: %s' % e)
+
+    m = node.info.meta
+    if not m:
+        raise ReadFailed(path, '无元数据')
+    size = m.size or 0
+
+    buf = b''
+    off = 0
+    while off < size:
+        try:
+            blk = node.read_random(off, min(chunk, size - off))
+        except Exception as e:
+            raise ReadFailed(path, '读取中断 @%d: %s' % (off, e))
+        if not blk:
+            break
+        off += len(blk)
+        buf += blk
+        parts = buf.split(b'\n')
+        buf = parts.pop()
+        for p in parts:
+            yield p.decode('utf-8', 'replace').rstrip('\r')
+    if buf:
+        yield buf.decode('utf-8', 'replace').rstrip('\r')
+
+
 # ============================================================
 # 目录列举
 # ============================================================

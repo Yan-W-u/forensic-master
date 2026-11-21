@@ -36,22 +36,22 @@ def utc(ts):
 
 
 def read_text(fs, path):
-    """普通文本。返回 (text, truncated)。
-
-    显式返回 truncated，调用方要自己决定是否接受。
-    """
+    """读文本，返回 str。截断即抛 Truncated —— 不静默返回半截。"""
     r = fsio.read_text(fs, path)
-    return r.data.decode('utf-8', 'replace'), r.truncated
+    if r.truncated:
+        raise fsio.Truncated(path, r.size_expected, r.size_actual, r.data, 'text')
+    return r.data.decode('utf-8', 'replace')
 
 
 def read_log(fs, path, tail=None):
-    """日志专用。
+    """日志取尾部，返回 str。几乎不会截断（tail 远小于上限）。
 
-    日志是追加写的：offset 0 是最旧的。
-    - tail=N     只读最后 N 字节 → 找「最后一次」「最近」
-    - tail=None  全量读（到上限）→ 统计「总共多少次」
+    全量统计不要用这个 —— 走 fsio.iter_lines() 流式扫描。
     """
-    return fsio.log_text(fs, path, tail)
+    r = fsio.read_log(fs, path, tail)
+    if r.truncated:
+        raise fsio.Truncated(path, r.size_expected, r.size_actual, r.data, 'log')
+    return r.data.decode('utf-8', 'replace')
 
 
 # 目录枚举统一走 fsio.Entry。name 永远是干净文件名，可原样拼路径。
@@ -61,13 +61,44 @@ fmt = fsio.fmt        # 展示时才加 [D] 标记
 count = fsio.count
 
 
+
+def read_or(fs, path, default='', label=''):
+    """读单个文件，失败返回 default 并打印原因。
+
+    用于「文件可能存在也可能不存在」的小配置（timezone、sshd_config 等）。
+    要区分「不存在」和「读失败」时用 info 版。
+    """
+    try:
+        return read_text(fs, path), ''
+    except fsio.ReadFailed as e:
+        return default, e.reason
+
+
+def read_many(fs, paths, label=''):
+    """批量读，返回 (成功列表, 失败清单)。
+
+    目录遍历用：一个失败不中断整轮，最后统报。
+    """
+    ok, failed = [], []
+    for pth in paths:
+        try:
+            ok.append((pth, read_text(fs, pth)))
+        except fsio.ReadFailed as e:
+            failed.append((pth, e.reason))
+    if failed and label:
+        print('  ⚠ %s: %d 个读失败' % (label, len(failed)))
+        for pth, why in failed[:8]:
+            print('     %-52s %s' % (pth.rsplit('/', 1)[-1][:50], why[:40]))
+    return ok, failed
+
+
 def cmd_profile(fs):
     print('=' * 76)
     print('系统概览')
     print('=' * 76)
     # os-release 要先判符号链接
     for p in ('/usr/lib/os-release', '/etc/os-release'):
-        t, _tr = read_text(fs, p)
+        t = read_text(fs, p)
         if t and '=' in t:
             d = dict(l.split('=', 1) for l in t.splitlines() if '=' in l)
             print('%-18s %-12s %s' % ('发行版', d.get('ID', '?').strip('"'),
@@ -80,12 +111,17 @@ def cmd_profile(fs):
         ('时区', '/etc/timezone', None),
         ('内核', '/proc/version', None),
     ]:
-        t, _tr = read_text(fs, p).strip()
+        # 小配置：文件可能不存在（/etc/timezone 常缺），用 read_or
+        t, why = read_or(fs, p)
+        t = t.strip()
         if t:
             print('%-18s %s' % (label, t.splitlines()[0][:90]))
+        elif why:
+            print('%-18s (%s)' % (label, why[:40]))
     print()
     print('%-18s %s' % ('fstab 条目', ''))
-    for ln in read_text(fs, '/etc/fstab').splitlines():
+    _fstab, _ = read_or(fs, '/etc/fstab')
+    for ln in _fstab.splitlines():
         if ln.strip() and not ln.startswith('#'):
             print('   ', ln[:110])
 
@@ -97,12 +133,18 @@ def cmd_accounts(fs):
     algo = {'$1$': 'md5', '$5$': 'sha256', '$6$': 'sha512', '$y$': 'yescrypt',
             '$2b$': 'bcrypt', '$2y$': 'bcrypt', '$argon2': 'argon2'}
     shadow = {}
-    for ln in read_text(fs, '/etc/shadow').splitlines():
+    _shadow, _w1 = read_or(fs, '/etc/shadow')
+    if _w1:
+        print('  ⚠ shadow: %s' % _w1[:50])
+    for ln in _shadow.splitlines():
         p = ln.split(':')
         if len(p) > 1:
             shadow[p[0]] = p[1]
     print('%-18s %-6s %-6s %-10s %-12s %s' % ('用户', 'UID', 'GID', 'shell', '密码算法', '状态'))
-    for ln in read_text(fs, '/etc/passwd').splitlines():
+    _passwd, _w2 = read_or(fs, '/etc/passwd')
+    if _w2:
+        print('  ⚠ passwd: %s' % _w2[:50])
+    for ln in _passwd.splitlines():
         p = ln.split(':')
         if len(p) < 7:
             continue
@@ -137,8 +179,13 @@ def cmd_cron(fs):
 
     BACKDOOR = ['curl', 'wget', 'base64 -d', '/dev/tcp/', 'nc -e', 'bash -i',
                 'python -c', 'perl -e', 'xxd -r', 'chmod +x /tmp', 'sh -c']
+    _cron_fail = []
     for p in LOCS:
-        t, _tr = read_text(fs, p)
+        try:
+            t = read_text(fs, p)
+        except fsio.ReadFailed as e:
+            _cron_fail.append((p, e.reason))
+            continue
         if not t.strip():
             continue
         print('\n--- %s ---' % p)
@@ -163,7 +210,10 @@ def cmd_cron(fs):
             nm, sz, isdir, m = e.name, e.size, e.is_dir, e.meta
             if not nm.endswith('.timer'):
                 continue
-            t, _tr = read_text(fs, d + '/' + nm)
+            try:
+                t = read_text(fs, nm)   # e.name 已是完整路径
+            except fsio.ReadFailed:
+                continue
             cal = re.search(r'OnCalendar=(.*)', t)
             unit = re.search(r'Unit=(.*)', t)
             print('  %-40s %-26s -> %s' % (nm, (cal.group(1) if cal else '?'),
@@ -186,7 +236,10 @@ def cmd_hist(fs, user='root'):
         '清理': ['shred', 'rm -rf', 'history -c', 'unset HISTFILE', '>/dev/null'],
     }
     for fn in FILES:
-        t, _tr = read_text(fs, base + '/' + fn)
+        try:
+            t = read_text(fs, base + '/' + fn)
+        except fsio.ReadFailed:
+            continue
         if not t.strip():
             continue
         lines = t.splitlines()
@@ -217,7 +270,7 @@ def cmd_ssh(fs):
     print('=' * 76)
     print('SSH 取证')
     print('=' * 76)
-    cfg, _tr = read_text(fs, '/etc/ssh/sshd_config')
+    cfg, _w3 = read_or(fs, '/etc/ssh/sshd_config')
     if cfg:
         for k in ('Port', 'PermitRootLogin', 'PasswordAuthentication',
                   'PubkeyAuthentication', 'AllowUsers', 'MaxAuthTries'):
@@ -229,27 +282,51 @@ def cmd_ssh(fs):
         print('  sshd_config 未找到')
 
     print('\n--- 认证日志（登录/失败/sudo）---')
+    RE_OK = re.compile(r'Accepted (\S+) for (\S+) from ([\d.]+)')
+    RE_BAD = re.compile(r'Failed (\S+) for (?:invalid user )?(\S+) from ([\d.]+)')
+
     for p in ('/var/log/auth.log', '/var/log/secure'):
-        # 先读尾部看「最近」，再全量统计
-        tail, _tr = read_log(fs, p, tail=2 << 20)
-        t, _tr = read_log(fs, p)
-        if not t.strip() and not tail.strip():
+        # ① 尾部取「最近」——这条几乎不会截断
+        try:
+            tail = read_log(fs, p, tail=2 << 20)
+        except fsio.ReadFailed as e:
+            print('  %s: %s' % (p, e.reason))
             continue
-        # 尾部里找最后一次成功登录
+
         last_ok = None
         for ln in tail.splitlines():
-            m2 = re.search(r'Accepted (\S+) for (\S+) from ([\d.]+)', ln)
+            m2 = RE_OK.search(ln)
             if m2:
                 last_ok = (ln[:15], m2.group(1), m2.group(2), m2.group(3))
         if last_ok:
             print('  最近成功登录: %s  方式=%s 用户=%s 来源=%s' % last_ok)
-        ok = re.findall(r'Accepted (\S+) for (\S+) from ([\d.]+)', t)
-        bad = re.findall(r'Failed (\S+) for (?:invalid user )?(\S+) from ([\d.]+)', t)
-        print('  %s: 成功 %d 次, 失败 %d 次' % (p, len(ok), len(bad)))
+
+        # ② 全量统计走流式，永不截断
         from collections import Counter
-        print('    成功来源 TOP:', Counter(x[2] for x in ok).most_common(5))
-        print('    失败来源 TOP:', Counter(x[2] for x in bad).most_common(5))
-        print('    登录方式:', Counter(x[0] for x in ok).most_common())
+        ok_src, bad_src, ok_way = Counter(), Counter(), Counter()
+        n_ok = n_bad = n_line = 0
+        try:
+            for ln in fsio.iter_lines(fs, p):
+                n_line += 1
+                m2 = RE_OK.search(ln)
+                if m2:
+                    n_ok += 1
+                    ok_way[m2.group(1)] += 1
+                    ok_src[m2.group(3)] += 1
+                    continue
+                m3 = RE_BAD.search(ln)
+                if m3:
+                    n_bad += 1
+                    bad_src[m3.group(3)] += 1
+        except fsio.ReadFailed as e:
+            print('  %s: 全量扫描中断 %s（已扫 %d 行）' % (p, e.reason, n_line))
+            continue
+
+        print('  %s: 成功 %d 次, 失败 %d 次（扫 %d 行，流式）'
+              % (p, n_ok, n_bad, n_line))
+        print('    成功来源 TOP:', ok_src.most_common(5))
+        print('    失败来源 TOP:', bad_src.most_common(5))
+        print('    登录方式:', ok_way.most_common())
         break
 
     print('\n--- authorized_keys（后门排查）---')
@@ -259,9 +336,14 @@ def cmd_ssh(fs):
             for e in ls(fs, '/home'):
                 nm, sz, isdir, m = e.name, e.size, e.is_dir, e.meta
                 if isdir:
-                    cands.append('/home/%s/.ssh/authorized_keys' % nm)
+                    # e.name 已是 /home/<user>，直接接后缀
+                    cands.append(nm.rstrip('/') + '/.ssh/authorized_keys')
         for p in cands:
-            t, _tr = read_text(fs, p)
+            try:
+                t = read_text(fs, p)
+            except fsio.ReadFailed as e:
+                print('  --- %s  (%s)' % (p, e.reason[:40]))
+                continue
             if not t.strip():
                 continue
             print('  ---', p)
@@ -288,7 +370,10 @@ def cmd_systemd(fs, kw=''):
                 continue
             if kw and kw.lower() not in nm.lower():
                 continue
-            t, _tr = read_text(fs, d + '/' + nm)
+            try:
+                t = read_text(fs, nm)   # e.name 已是完整路径
+            except fsio.ReadFailed:
+                continue
             desc = re.search(r'Description=(.*)', t)
             ex = re.search(r'ExecStart=(.*)', t)
             print('  %-42s' % nm)
@@ -311,8 +396,12 @@ def cmd_docker(fs):
         nm, sz, isdir, m = e.name, e.size, e.is_dir, e.meta
         if not isdir:
             continue
-        p = '%s/%s/config.v2.json' % (base, nm)
-        t, _tr = read_text(fs, p)
+        # e.name 已是完整路径，直接接后缀
+        p = nm.rstrip('/') + '/config.v2.json'
+        try:
+            t = read_text(fs, p)
+        except fsio.ReadFailed:
+            continue
         if not t:
             continue
         try:
@@ -341,16 +430,15 @@ def cmd_web(fs):
             '/etc/nginx/conf.d/default.conf']
     for base in ('/opt', '/usr/local', '/srv', '/var/www', '/data'):
         for e in ls(fs, base):
-            nm, sz, isdir, m = e.name, e.size, e.is_dir, e.meta
-            if isdir:
-                for e2 in ls(fs, base + '/' + nm):
-                    nm2, sz2, isdir2, m2 = e2.name, e2.size, e2.is_dir, e2.meta
-                    if not isdir2 and nm2.endswith('.conf'):
-                        CAND.append('%s/%s/%s' % (base, nm, nm2))
-            elif nm.endswith('.conf'):
-                CAND.append(base + '/' + nm)
+            # e.name 与 e2.name 都已是完整路径，不再拼 base
+            if e.is_dir:
+                for e2 in ls(fs, e.name):
+                    if not e2.is_dir and e2.name.endswith('.conf'):
+                        CAND.append(e2.name)
+            elif e.name.endswith('.conf'):
+                CAND.append(e.name)
     for p in CAND:
-        t, _tr = read_text(fs, p)
+        t, _ww = read_or(fs, p)
         if not t.strip():
             continue
         lines = [l.strip() for l in t.splitlines()
@@ -363,7 +451,7 @@ def cmd_web(fs):
         for s in lines:
             print('   ', s[:120])
     for p in ('/etc/apache2/ports.conf', '/etc/httpd/conf/httpd.conf'):
-        t, _tr = read_text(fs, p)
+        t, _wa = read_or(fs, p)
         if t.strip():
             print('\n--- %s ---' % p)
             for ln in t.splitlines():
