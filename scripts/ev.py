@@ -184,11 +184,30 @@ def _open_cached(path, lba):
         if not mounts:
             raise OSError('整盘不是文件系统，且没找到可挂载分区。'
                           '用 --parts 看看：python ev.py "%s" --parts' % path)
-        idx, plba, psize, desc = max(mounts, key=lambda x: x[2])
-        print('  整盘无文件系统，自动用分区 %d (LBA %d, %s)'
-              % (idx, plba, desc), file=sys.stderr)
-        img2 = _open_img(path)
-        return pytsk3.FS_Info(img2, offset=plba * SECTOR)
+        # 按大小降序试，逐个打开直到成功
+        tried = []
+        for idx, plba, psize, desc in sorted(mounts, key=lambda x: -x[2]):
+            for off in (0, 2048, 384, 1024):
+                # off=0       普通分区
+                # off=2048    LVM 默认 pe_start（PV 起始 + 2048）
+                # off=384/1024  其他 LVM 布局
+                try:
+                    img2 = _open_img(path)
+                    fs = pytsk3.FS_Info(img2, offset=(plba + off) * SECTOR)
+                    if off:
+                        print('  分区 %d (LBA %d) 是 LVM，实际 FS 在 +%d = %d'
+                              % (idx, plba, off, plba + off), file=sys.stderr)
+                    else:
+                        print('  自动用分区 %d (LBA %d, %s)'
+                              % (idx, plba, desc), file=sys.stderr)
+                    return fs
+                except OSError:
+                    tried.append(plba + off)
+                    continue
+        raise OSError(
+            '所有分区都打不开。已试 LBA: %s\n'
+            '  用 --parts 看结构，或手动指定：python ev.py "%s" 4200448'
+            % (', '.join(str(t) for t in tried[:12]), path))
 
 
 def open_fs(name_or_path=None, lba=None):
@@ -267,19 +286,14 @@ def read_text(f, path, limit=4 << 20):
     return read_file(f, path, limit).decode('utf-8', 'replace')
 
 
-def ls(f, path):
-    out = []
-    try:
-        for en in f.open_dir(path):
-            nm = en.info.name.name.decode('utf-8', 'replace')
-            if nm in ('.', '..'):
-                continue
-            m = en.info.meta
-            out.append((nm, m.size if m else 0,
-                        m.type == pytsk3.TSK_FS_META_TYPE_DIR if m else False, m))
-    except Exception:
-        pass
-    return out
+def ls(f, path, show_deleted=False):
+    """列目录。委托给 fsio，返回 Entry 列表。
+
+    Entry.name 是干净文件名，可直接拼路径：
+        fs.open(path + '/' + e.name)
+    """
+    import fsio as _fsio
+    return _fsio.ls(f, path, show_deleted=show_deleted)
 
 
 if __name__ == '__main__':
@@ -300,5 +314,5 @@ if __name__ == '__main__':
     print('文件系统: block_size=%d block_count=%d'
           % (f.info.block_size, f.info.block_count))
     print()
-    for nm, sz, isdir, m in ls(f, '/')[:20]:
-        print('  %s %-46s %10d' % ('d' if isdir else '-', nm, sz))
+    for e in ls(f, '/')[:20]:
+        print('  %s %-46s %10d' % ('d' if e.is_dir else '-', e.name, e.size))

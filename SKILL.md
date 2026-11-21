@@ -687,7 +687,7 @@ python <skill>\scripts\fsio.py
 |---|---|---|
 | 日志方向 | `read_random(0, 2MB)` 拿最旧 | `read_log(tail=N)` 拿最新 |
 | hive 截断 | 静默限 64 MB | `read_hive()` 限 512 MB 且报警 |
-| 删除文件 | 混在正常项里 | `ls()` 返回 5 元组带 `is_deleted` |
+| 删除文件 | 混在正常项里 | `Entry.deleted` 字段，默认排除 |
 | 时间口径 | 两种格式混打 | `fmt_epoch`/`fmt_filetime` 统一带 UTC/LCL |
 
 ```python
@@ -695,8 +695,10 @@ import fsio
 from ev import open_fs
 fs = open_fs('D:/case/disk.E01')                     # 自动选分区
 tail = fsio.read_log(fs, '/var/log/auth.log', tail=2<<20)   # 最近
-rows = fsio.ls(fs, '/Users')                          # 带删除标记
-print(fsio.fmt_epoch(rows[0][4].mtime))               # 2026-09-01 06:13:20 UTC
+rows = fsio.ls(fs, '/Users')                          # Entry 列表，默认排除删除项
+print(fsio.fmt_epoch(rows[0].meta.mtime))            # 2026-09-01 06:13:20 UTC
+for e in fsio.ls_all(fs, '/Users'):                    # 显式含删除项
+    print(fsio.fmt(e))                                # 展示时才有 [D] 标记
 ```
 
 ### winkit.py —— Windows 取证工具集

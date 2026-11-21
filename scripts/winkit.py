@@ -61,19 +61,11 @@ def read_text(fs, path, limit=None):
     return fsio.read_text(fs, path, limit)
 
 
-def ls(fs, path):
-    """列目录。返回 (name, size, is_dir, meta)，已删除项带 [DELETED] 标记
-    兼容旧调用：第 3 项仍是 is_dir，第 4 项仍是 meta。"""
-    out = []
-    for nm, sz, isdir, deleted, m in fsio.ls(fs, path):
-        shown = (nm + ' [DELETED]') if deleted else nm
-        out.append((shown, sz, isdir, m))
-    return out
-
-
-def ls_raw(fs, path):
-    """带删除标记的原始列表：(name, size, is_dir, is_deleted, meta)"""
-    return fsio.ls(fs, path)
+# 目录枚举统一走 fsio.Entry。name 永远是干净文件名，可原样拼路径。
+ls = fsio.ls          # 默认排除已删除
+ls_all = fsio.ls_all  # 显式包含已删除
+fmt = fsio.fmt        # 展示时才加 [D] 标记
+count = fsio.count    # 统计辅助
 
 
 def find_controlset(fs):
@@ -96,9 +88,10 @@ def cmd_info(fs):
         fs.info.block_size, fs.info.block_count,
         fs.info.block_size * fs.info.block_count / 1e9))
     print('\n用户目录:')
-    for nm, sz, isdir, m in ls(fs, '/Users'):
+    for e in ls(fs, '/Users'):
+        nm, sz, isdir = e.name, e.size, e.is_dir
         if isdir:
-            print('  %-28s crtime=%s' % (nm, dt_utc(m.crtime)))
+            print('  %-28s crtime=%s' % (nm, dt_utc(e.meta.crtime if e.meta else 0)))
     print('\n关键 hive:')
     for p in ('/Windows/System32/config/SOFTWARE', '/Windows/System32/config/SYSTEM',
               '/Windows/System32/config/SAM', '/Windows/System32/config/SECURITY'):
@@ -116,7 +109,8 @@ def cmd_hives(fs):
     T = {}
     for c in ('SOFTWARE', 'SYSTEM', 'SAM', 'SECURITY', 'DEFAULT'):
         T[c] = '/Windows/System32/config/' + c
-    for nm, sz, isdir, m in ls(fs, '/Users'):
+    for e in ls(fs, '/Users'):
+        nm, sz, isdir = e.name, e.size, e.is_dir
         if not isdir:
             continue
         T['%s_NTUSER' % nm] = '/Users/%s/NTUSER.DAT' % nm
@@ -400,16 +394,17 @@ def cmd_software(fs):
     print('\n  → 降级：从 Program Files 目录 + Amcache 推断')
     roots = ['/Program Files', '/Program Files (x86)']
     # 自动发现用户目录，不写死用户名
-    for un, _s, isdir, _m in ls(fs, '/Users'):
+    for e in ls(fs, '/Users'):
+        un, isdir = e.name, e.is_dir
         if isdir and un not in ('All Users', 'Default', 'Default User', 'Public'):
             roots.append('/Users/%s/AppData/Local/Programs' % un)
     for root in roots:
-        items = [(n, s, m) for n, s, d, m in ls(fs, root) if d]
+        items = [e for e in ls(fs, root) if e.is_dir]   # 只看目录，已删除项已被 ls 默认排除
         if not items:
             continue
         print('\n[%s] %d 个' % (root, len(items)))
-        for n, s, m in sorted(items)[:40]:
-            print('   %-46s crtime=%s' % (n[:44], dt_utc(m.crtime)))
+        for e in sorted(items, key=lambda x: x.name)[:40]:
+            print('   %s crtime=%s' % (fmt(e, 46), dt_utc(e.meta.crtime)))
 
 
 def cmd_autorun(fs):
@@ -496,18 +491,22 @@ def cmd_pf(fs):
     print('=' * 76)
     print('Prefetch')
     print('=' * 76)
-    items = [(n, s, m) for n, s, d, m in ls(fs, '/Windows/Prefetch') if n.endswith('.pf')]
+    items = [e for e in ls(fs, '/Windows/Prefetch')
+             if e.name.endswith('.pf')]   # name 干净，endswith 可靠
     print('共 %d 个 .pf' % len(items))
-    for n, s, m in sorted(items)[:40]:
-        print('  %-52s crtime=%s' % (n, dt_utc(m.crtime)))
+    for e in sorted(items, key=lambda x: x.name)[:40]:
+        print('  %-52s crtime=%s' % (fmt(e, 52), dt_utc(e.meta.crtime)))
     if items:
         out = os.path.join(OUTROOT, 'prefetch')
         os.makedirs(out, exist_ok=True)
-        for n, s, m in items:
+        for e in items:
             try:
-                open(os.path.join(out, n), 'wb').write(read(fs, '/Windows/Prefetch/' + n))
-            except Exception:
-                pass
+                # e.name 是干净文件名，能原样拼回路径
+                data = read(fs, '/Windows/Prefetch/' + e.name)
+                if data:
+                    open(os.path.join(out, e.name), 'wb').write(data)
+            except Exception as ex:
+                fsio.warn('导出 %s 失败: %s' % (e.name, ex))
         print('\n已导出到 %s，可跑 PECmd' % out)
 
 
@@ -516,8 +515,9 @@ def cmd_browser(fs, user=None):
     print('浏览器数据 —— %s' % user)
     print('=' * 76)
     if not user:
-        users = [n for n, s, d, m in ls(fs, '/Users') if d
-                 and n not in ('All Users', 'Default', 'Default User', 'Public')]
+        users = [e.name for e in ls(fs, '/Users')
+                 if e.is_dir and e.name not in ('All Users', 'Default',
+                                                'Default User', 'Public')]
         if not users:
             print('  未找到用户目录')
             return
@@ -548,8 +548,9 @@ def cmd_recent(fs, user=None):
     print('文件痕迹 —— %s' % user)
     print('=' * 76)
     if not user:
-        users = [n for n, s, d, m in ls(fs, '/Users') if d
-                 and n not in ('All Users', 'Default', 'Default User', 'Public')]
+        users = [e.name for e in ls(fs, '/Users')
+                 if e.is_dir and e.name not in ('All Users', 'Default',
+                                                'Default User', 'Public')]
         if not users:
             print('  未找到用户目录')
             return
@@ -560,17 +561,20 @@ def cmd_recent(fs, user=None):
                      ('AutomaticDestinations', D + '/Recent/AutomaticDestinations'),
                      ('CustomDestinations', D + '/Recent/CustomDestinations'),
                      ('Startup', D + '/Start Menu/Programs/Startup')]:
-        items = [(n, s, m) for n, s, d, m in ls(fs, p) if not d]
-        print('\n[%s] %d 项' % (label, len(items)))
-        for n, s, m in items[:8]:
-            print('   %-50s %8d' % (n, s))
-    print('\n[回收站]')
+        items = [e for e in ls(fs, p) if not e.is_dir]
+        nd = sum(1 for e in ls_all(fs, p) if e.deleted)
+        print('\n[%s] %d 项%s' % (label, len(items),
+                                  ('（另有 %d 项已删除）' % nd) if nd else ''))
+        for e in items[:8]:
+            print('   %s %8d' % (fmt(e, 50), e.size))
+    print('\n[回收站]  （含已删除项，[D] 为删除标记）')
     for p in ('/$Recycle.Bin', '/Users/%s/$Recycle.Bin' % user):
-        items = [(n, s, m) for n, s, d, m in ls(fs, p) if not d]
+        items = [e for e in ls_all(fs, p) if not e.is_dir]
         if items:
-            print('  %s: %d 项' % (p, len(items)))
-            for n, s, m in items[:8]:
-                print('     %-46s %8d' % (n, s))
+            nd = sum(1 for e in items if e.deleted)
+            print('  %s: %d 项（其中已删除 %d）' % (p, len(items), nd))
+            for e in items[:8]:
+                print('     %s %8d' % (fmt(e, 46), e.size))
 
 
 def main():

@@ -523,15 +523,24 @@ data = fsio.read_hive(fs, path)   # 默认 512 MB，超限警告
 
 「最后访问的文件是哪个」「某文件何时被删」这类题，混进一条已删除项就是错答。
 
-**修法**：
+**修法**：删除状态放字段，**不改 name**。
 
 ```python
 import fsio
-rows = fsio.ls(fs, '/path')        # (name, size, is_dir, is_deleted, meta)
-for nm, sz, isdir, deleted, m in rows:
-    if deleted:
-        print('[DELETED] %s' % nm)
+rows = fsio.ls(fs, '/path')             # 默认已排除删除项
+for e in fsio.ls_all(fs, '/path'):      # 显式要全部
+    if e.deleted:
+        print(fsio.fmt(e))              # 展示时才加 [D] 标记
 ```
+
+**绝不能用改名字来传状态**（`nm + ' [DELETED]'`），四处会炸：
+
+| 后果 | 具体 |
+|---|---|
+| 切断格式化 | `n[:44]` 把 `foo.pf [DELETED]` 截成 `foo.pf [DELET`，标记残半 |
+| 名字打不开文件 | `'/Windows/Prefetch/' + n` 拼出不存在路径 |
+| 统计碰巧正确 | `n.endswith('.pf')` 因标记后缀失效，这次恰好过滤对了，下次不一定 |
+| 排序被打乱 | `' [DELETED]'` 以空格开头，字典序排在最前 |
 
 **常量对照**：
 

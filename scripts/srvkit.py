@@ -50,17 +50,11 @@ def read_log(fs, path, tail=None):
     return fsio.read_log(fs, path, tail)
 
 
-def ls(fs, path):
-    """列目录，已删除项标 [DELETED]"""
-    out = []
-    for nm, sz, isdir, deleted, m in fsio.ls(fs, path):
-        shown = (nm + ' [DELETED]') if deleted else nm
-        out.append((shown, sz, isdir, m))
-    return out
-
-
-def ls_raw(fs, path):
-    return fsio.ls(fs, path)
+# 目录枚举统一走 fsio.Entry。name 永远是干净文件名，可原样拼路径。
+ls = fsio.ls          # 默认排除已删除
+ls_all = fsio.ls_all  # 显式包含已删除
+fmt = fsio.fmt        # 展示时才加 [D] 标记
+count = fsio.count
 
 
 def cmd_profile(fs):
@@ -127,11 +121,13 @@ def cmd_cron(fs):
     print('=' * 76)
     LOCS = ['/etc/crontab', '/etc/anacrontab']
     for d in ('/etc/cron.d', '/var/spool/cron/crontabs', '/var/spool/cron'):
-        for nm, sz, isdir, m in ls(fs, d):
+        for e in ls(fs, d):
+            nm, sz, isdir, m = e.name, e.size, e.is_dir, e.meta
             if not isdir:
                 LOCS.append(d.rstrip('/') + '/' + nm)
     for d in ('/etc/cron.hourly', '/etc/cron.daily', '/etc/cron.weekly', '/etc/cron.monthly'):
-        for nm, sz, isdir, m in ls(fs, d):
+        for e in ls(fs, d):
+            nm, sz, isdir, m = e.name, e.size, e.is_dir, e.meta
             if not isdir:
                 print('  [%s] %s' % (d.split('/')[-1], nm))
 
@@ -159,7 +155,8 @@ def cmd_cron(fs):
     # systemd timer
     print('\n--- systemd timer ---')
     for d in ('/etc/systemd/system', '/usr/lib/systemd/system'):
-        for nm, sz, isdir, m in ls(fs, d):
+        for e in ls(fs, d):
+            nm, sz, isdir, m = e.name, e.size, e.is_dir, e.meta
             if not nm.endswith('.timer'):
                 continue
             t = read_text(fs, d + '/' + nm)
@@ -255,7 +252,8 @@ def cmd_ssh(fs):
     for u in ('/root', '/home'):
         cands = [u + '/.ssh/authorized_keys'] if u == '/root' else []
         if u == '/home':
-            for nm, sz, isdir, m in ls(fs, '/home'):
+            for e in ls(fs, '/home'):
+                nm, sz, isdir, m = e.name, e.size, e.is_dir, e.meta
                 if isdir:
                     cands.append('/home/%s/.ssh/authorized_keys' % nm)
         for p in cands:
@@ -280,7 +278,8 @@ def cmd_systemd(fs, kw=''):
     print('systemd 服务')
     print('=' * 76)
     for d in ('/etc/systemd/system', '/usr/lib/systemd/system'):
-        for nm, sz, isdir, m in ls(fs, d):
+        for e in ls(fs, d):
+            nm, sz, isdir, m = e.name, e.size, e.is_dir, e.meta
             if not nm.endswith('.service'):
                 continue
             if kw and kw.lower() not in nm.lower():
@@ -304,7 +303,8 @@ def cmd_docker(fs):
     print('Docker 容器')
     print('=' * 76)
     base = '/var/lib/docker/containers'
-    for nm, sz, isdir, m in ls(fs, base):
+    for e in ls(fs, base):
+        nm, sz, isdir, m = e.name, e.size, e.is_dir, e.meta
         if not isdir:
             continue
         p = '%s/%s/config.v2.json' % (base, nm)
@@ -336,9 +336,11 @@ def cmd_web(fs):
     CAND = ['/etc/nginx/nginx.conf', '/etc/nginx/sites-enabled/default',
             '/etc/nginx/conf.d/default.conf']
     for base in ('/opt', '/usr/local', '/srv', '/var/www', '/data'):
-        for nm, sz, isdir, m in ls(fs, base):
+        for e in ls(fs, base):
+            nm, sz, isdir, m = e.name, e.size, e.is_dir, e.meta
             if isdir:
-                for nm2, sz2, isdir2, m2 in ls(fs, base + '/' + nm):
+                for e2 in ls(fs, base + '/' + nm):
+                    nm2, sz2, isdir2, m2 = e2.name, e2.size, e2.is_dir, e2.meta
                     if not isdir2 and nm2.endswith('.conf'):
                         CAND.append('%s/%s/%s' % (base, nm, nm2))
             elif nm.endswith('.conf'):
@@ -375,13 +377,15 @@ def cmd_timeline(fs):
                '/var/log/auth.log', '/var/log/syslog']
     rows = []
     for p in TARGETS:
-        for nm, sz, isdir, m in ls(fs, os.path.dirname(p)):
+        for e in ls(fs, os.path.dirname(p)):
+            nm, sz, isdir, m = e.name, e.size, e.is_dir, e.meta
             full = os.path.dirname(p) + '/' + nm
             if os.path.basename(p) and nm != os.path.basename(p):
                 continue
             rows.append((m.mtime if m else 0, full, sz))
         if not os.path.basename(p):
-            for nm, sz, isdir, m in ls(fs, p):
+            for e in ls(fs, p):
+                nm, sz, isdir, m = e.name, e.size, e.is_dir, e.meta
                 rows.append((m.mtime if m else 0, p + '/' + nm, sz))
     for mt, p, sz in sorted(set(rows))[:60]:
         print('  %s  %10d  %s' % (utc(mt), sz, p))
