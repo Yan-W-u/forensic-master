@@ -151,8 +151,9 @@ _BIN = [
          url='https://hashcat.net/files/hashcat-6.2.6.7z',
          winget='',
          dest='hashcat',
-         check=[r'Toolset\FileDecryptTool\hashcat.exe',
-                r'hashcat\hashcat.exe'],
+         check=[r'hashcat\hashcat.exe',
+                r'Toolset\FileDecryptTool\hashcat.exe',
+                r'hashcat-*\hashcat.exe'],   # 常见布局都探一遍，不写死单一位置
          alt='从 hashcat.net 下载 7z，解压到 FORENSIC_TOOLS\\hashcat'),
 
     # --- 必装：二进制判壳 ---
@@ -183,7 +184,6 @@ _BIN = [
              ('SBECmd', 'https://download.ericzimmermanstools.com/net9/SBECmd.zip'),
              ('RECmd', 'https://download.ericzimmermanstools.com/net9/RECmd.zip'),
              ('bstrings', 'https://download.ericzimmermanstools.com/net9/bstrings.zip'),
-             ('MFTECmd', 'https://download.ericzimmermanstools.com/net9/MFTECmd.zip'),
          ],
          alt='从 ericzimmermanstools.com 逐个下载'),
 
@@ -191,8 +191,7 @@ _BIN = [
     dict(name='jadx', critical=False, desc='APK 反编译 GUI',
          url='https://github.com/skylot/jadx/releases/download/v1.5.1/jadx-gui-1.5.1-with-jre-win.zip',
          dest='jadx',
-         check=[r'jadx\jadx-gui-1.5.6.exe',
-                r'jadx\bin\jadx-gui.bat',
+         check=[r'jadx\bin\jadx-gui.bat',
                 r'jadx\jadx-gui-1.5.1.exe'],
          alt='gh release download -R skylot/jadx'),
 

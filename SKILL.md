@@ -776,7 +776,7 @@ python sqlite_tools.py lnk      <Recent目录>
 | 文件 | 覆盖题型 |
 |---|---|
 | **`references/quickwin.md`** | **源 × 题 矩阵、一源多题的位置、什么时候换源（先读这个）** |
-| `references/traps.md` | **失分陷阱清单 34 条 + 开工检查表（必读）** |
+| `references/traps.md` | **失分陷阱清单 40 条 + 开工检查表 26 项（必读）** |
 | `references/windows.md` | **Windows 全量**：注册表/事件日志/$J/时间戳三道/DPAPI/Amcache/ShellBags/浏览器/**hive损坏诊断**/**shellcode** |
 | `references/linux.md` | **服务器取证全量**：配置/账号/日志/**cron**/**bash_history**/**SSH**/Docker/Web/**反取证识别** + Go/Rust 判别 |
 | `references/mobile.md` | **手机全量**：iOS/WhatsApp/**MIUI .bak**/protobuf/**明文库普查**/Android 特有数据/反取证/OCR |
@@ -859,7 +859,7 @@ python sqlite_tools.py lnk      <Recent目录>
 ├── SKILL.md              本文
 ├── references/
 │   ├── quickwin.md       ★ 三档分类 + 源×题矩阵（开工先读）
-│   ├── traps.md          ★ 34 条失分陷阱 + 25 条检查表
+│   ├── traps.md          ★ 40 条失分陷阱 + 25 条检查表
 │   ├── containers.md     容器/加密 + 密钥链断了怎么办
 │   ├── case2.md          加密库密钥不在检材
 │   ├── windows.md        Windows 全量（含 hive 损坏诊断）

@@ -5,7 +5,7 @@
 不是「帮你跑命令」，是「帮你答对题」。
 
 来自两场真实取证赛的完整复盘：**2026 美亚杯个人赛（128 题）** + **2026 龙信杯（75 题）**。
-包含 35 条用真实失误换来的陷阱、6 个专用工具集、一套「先做哪一半」的开工流程，
+包含 40 条用真实失误换来的陷阱、6 个专用工具集、一套「先做哪一半」的开工流程，
 以及**一键部署脚本**（自动装 Python 库 + 二进制工具）。
 
 ---
@@ -223,7 +223,7 @@ python scripts/srvkit.py ssh srv
 | 文件 | 体量 | 覆盖 |
 |---|---|---|
 | `quickwin.md` | 11.6 KB | **三档分类法**、源 × 题矩阵、A 档验证 |
-| `traps.md` | 20.9 KB | **40 条失分陷阱** + 26 项开工检查表 |
+| `traps.md` | 27.9 KB | **40 条失分陷阱** + 26 项开工检查表 |
 | `windows.md` | 37.9 KB | 注册表/事件日志/$J/时间戳/DPAPI/ShellBags/**hive 损坏诊断**/shellcode |
 | `linux.md` | 31.5 KB | 配置/账号/**cron**/**bash_history**/**SSH**/Docker/Web/**反取证**/Go-Rust |
 | `mobile.md` | 30.0 KB | iOS/WhatsApp/**MIUI .bak**/protobuf/**明文库普查**/Android/OCR |

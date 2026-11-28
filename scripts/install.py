@@ -139,13 +139,11 @@ def try_winget(entry):
     return rc == 0, out[-300:]
 
 
-def try_download(entry):
-    """下载 + 解压（zip/7z/单 exe）"""
-    url = entry.get('url')
+def _download_one(url, dest, label=''):
+    """下载+解压单个 URL 到 dest。返回 (ok, msg)"""
     if not url:
-        return False, '无下载地址'
-    dest = os.path.join(FT, entry.get('dest') or '')
-    os.makedirs(dest if entry.get('dest') else FT, exist_ok=True)
+        return False, '无 URL'
+    os.makedirs(dest, exist_ok=True)
     fname = url.split('/')[-1].split('?')[0]
     local = os.path.join(FT, '_dl', fname)
     os.makedirs(os.path.dirname(local), exist_ok=True)
@@ -193,6 +191,45 @@ def try_download(entry):
         print('       请手动运行安装（或试 -S / /S 静默参数）')
         return True, tgt
     return False, '不认识的格式'
+
+
+def try_download(entry):
+    """下载 + 解压。支持单 url 与 extra 列表（EzTools 全家桶这类）。
+
+    extra 格式: [('子工具名', 'url'), ...]，各自解压到 dest/子工具名
+    """
+    dest = os.path.join(FT, entry.get('dest') or '')
+    os.makedirs(dest if entry.get('dest') else FT, exist_ok=True)
+
+    targets = []
+    url = entry.get('url')
+    if url:
+        targets.append((None, url))
+    for sub, sub_url in (entry.get('extra') or []):
+        targets.append((sub, sub_url))
+
+    if not targets:
+        return False, '无下载地址'
+
+    ok_n = fail_n = 0
+    last_msg = ''
+    for sub, u in targets:
+        sub_dest = os.path.join(dest, sub) if sub else dest
+        r, msg = _download_one(u, sub_dest, sub or entry.get('name', ''))
+        if r:
+            ok_n += 1
+        else:
+            fail_n += 1
+            last_msg = msg
+
+    total = ok_n + fail_n
+    if total > 1:
+        print('    %s %d/%d 个子项' % (OK if fail_n == 0 else '!', ok_n, total))
+    if ok_n == 0:
+        return False, last_msg or '全部失败'
+    if fail_n:
+        return True, '%d/%d 成功（%s）' % (ok_n, total, last_msg[:60])
+    return True, dest
 
 
 def install_bin(items):
@@ -368,7 +405,7 @@ def main():
     if not args.all and not args.critical and not args.yes:
         interactive = sys.stdin.isatty()
         if not interactive:
-            print('\n非交互式环境，直接安装（用 --no-yes 可强制询问）')
+            print('\n非交互式环境，直接安装')
         else:
             try:
                 ans = input('\n开始安装？[Y/n] ').strip().lower()
